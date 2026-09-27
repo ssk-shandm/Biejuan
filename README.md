@@ -140,3 +140,7 @@ docker/           Nginx 配置
 ## 许可证
 
 本项目采用 [MIT License](LICENSE)。
+
+## 支持项目
+
+如果这个项目对你有帮助，欢迎在 GitHub 仓库点一个 **Star**。你的支持会帮助项目持续改进！

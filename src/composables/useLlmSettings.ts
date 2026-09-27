@@ -278,6 +278,29 @@ export function buildChatCompletionsEndpoint(baseUrl: string) {
   return normalized.endsWith('/chat/completions') ? normalized : `${normalized}/chat/completions`
 }
 
+export function buildModelsEndpoint(baseUrl: string) {
+  const normalized = baseUrl.trim().replace(/\/+$/, '')
+  return normalized.endsWith('/models') ? normalized : `${normalized}/models`
+}
+
+export async function fetchAvailableModels(baseUrl: string, apiKey: string): Promise<string[]> {
+  const response = await fetch(buildModelsEndpoint(baseUrl), {
+    headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
+  })
+  if (!response.ok) {
+    const body = await response.text()
+    let message = body
+    try { message = (JSON.parse(body) as { error?: { message?: string } }).error?.message ?? body } catch { /* 保留原始错误 */ }
+    throw new Error(message || `获取模型列表失败（HTTP ${response.status}）`)
+  }
+  const payload = await response.json() as { data?: Array<{ id?: string }> }
+  const ids = (payload.data ?? [])
+    .map((item) => item.id)
+    .filter((id): id is string => Boolean(id))
+  if (!ids.length) throw new Error('模型服务未返回可用模型列表。')
+  return ids.sort()
+}
+
 export function useLlmSettings() {
   return {
     provider,
