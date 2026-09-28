@@ -1,5 +1,10 @@
 * text=auto eol=lf
 
+# Only Vue and TypeScript should appear in GitHub's language breakdown.
+* linguist-detectable=false
+*.vue linguist-detectable=true
+*.ts linguist-detectable=true
+
 # Keep documentation out of the language breakdown.
 *.md linguist-documentation
 
