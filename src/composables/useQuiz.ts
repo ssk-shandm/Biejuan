@@ -4,6 +4,8 @@ import { stripMarkdown } from '../utils/markdown'
 import { normalizeQuestionBank } from '../utils/questionSchema'
 import { useQuizStore } from '../stores/quizStore'
 import { showToast, showConfirm } from './useToast'
+import { isJsonFile, readImportedText } from '../services/fileService'
+import { GENERATED_BANK_PREFIX, GENERATED_BANKS_CHANGED, listGeneratedBanks, readGeneratedBank, saveGeneratedBank } from '../services/generatedBankStorage'
 
 export interface BankEntry {
   name: string
@@ -12,7 +14,7 @@ export interface BankEntry {
   imported?: boolean
 }
 
-type AnswerSheetEntry = {
+export type AnswerSheetEntry = {
   userAnswer: UserAnswer
   isCorrect: boolean | null
   showResult?: boolean
@@ -65,8 +67,8 @@ export function useQuiz() {
   const wrongDisplayEntryIds = ref<number[]>([])
 
   // ── 导入的外部题库 ──
-  const customBanks = ref<BankEntry[]>([])
-  const allBanks = computed(() => [...banks.value, ...customBanks.value])
+  const generatedBanks = ref<BankEntry[]>([])
+  const allBanks = computed(() => [...banks.value, ...generatedBanks.value])
   /** 缓存已导入的题库内容，以便切换题库时重新加载 */
   const importedCache = new Map<string, Question[]>()
 
@@ -95,25 +97,33 @@ export function useQuiz() {
     } catch (e) {
       console.error('加载题库清单失败:', e)
     }
+    try {
+      generatedBanks.value = await listGeneratedBanks()
+    } catch (e) {
+      console.error('load generated banks failed:', e)
+      showToast('加载本地题库失败，请重启应用后重试。')
+    }
     // 根据上次选择或默认选中第一个
-    if (banks.value.length > 0) {
+    if (allBanks.value.length > 0) {
       const last = localStorage.getItem(LAST_BANK_KEY)
-      if (last && banks.value.some((b) => b.file === last)) {
+      if (last && allBanks.value.some((b) => b.file === last)) {
         currentBankFile.value = last
       } else {
-        currentBankFile.value = banks.value[0]!.file
+        currentBankFile.value = allBanks.value[0]!.file
       }
     }
   }
 
   // ── 题库加载 ──
-  async function loadQuestions(fileName: string = currentBankFile.value) {
-    isLoading.value = true
+  async function loadQuestions(fileName: string = currentBankFile.value, showLoading = true) {
+    if (showLoading) isLoading.value = true
     try {
       // 优先从已导入的缓存中加载
       const cached = importedCache.get(fileName)
       if (cached) {
         questions.value = cached
+      } else if (fileName.startsWith(GENERATED_BANK_PREFIX)) {
+        questions.value = normalizeQuestionBank(await readGeneratedBank(fileName), fileName)
       } else {
         const resp = await fetch(`${fileName}?t=${Date.now()}`)
         if (!resp.ok) throw new Error('网络错误或文件不存在')
@@ -123,11 +133,12 @@ export function useQuiz() {
       const types = new Set(questions.value.map((q) => q.type))
       availableQuestionTypes.value = [...types].sort()
       currentBankFile.value = fileName
+      importedCache.set(fileName, questions.value)
     } catch (e) {
       console.error('加载题目失败:', e)
       showToast(`加载题库失败 (${fileName})，请检查文件是否存在。`)
     } finally {
-      isLoading.value = false
+      if (showLoading) isLoading.value = false
     }
   }
 
@@ -680,32 +691,55 @@ export function useQuiz() {
   /** 待导入的错题文件内容缓存（processed file） */
   const pendingImportQuestions = ref<Question[] | null>(null)
 
-  function importWrongQuestions() { fileInput.value?.click() }
-  function handleFileImport(event: Event) {
+  function importWrongQuestions() {
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      void importWrongQuestionsFromNativePicker()
+      return
+    }
+    fileInput.value?.click()
+  }
+
+  async function importWrongQuestionsFromNativePicker() {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog')
+      const { readTextFile } = await import('@tauri-apps/plugin-fs')
+      const selected = await open({ multiple: false, filters: [{ name: '错题 JSON', extensions: ['json'] }] })
+      if (!selected || Array.isArray(selected)) return
+      const content = await readTextFile(selected)
+      const fileName = selected.replace(/\\/g, '/').split('/').pop() ?? 'wrong-questions.json'
+      prepareWrongQuestionImport(content, fileName)
+    } catch (error) {
+      console.error('导入错题失败:', error)
+      showToast('导入错题失败：' + (error instanceof Error ? error.message : '未知错误'))
+    }
+  }
+
+  function prepareWrongQuestionImport(content: string, fileName: string) {
+    try {
+      const parsed = normalizeQuestionBank(JSON.parse(content), fileName)
+      pendingImportQuestions.value = parsed
+      importDialogNewNotebookName.value = fileName.replace(/\.json$/i, '')
+      showImportDialog.value = true
+    } catch (err) {
+      console.error('导入失败:', err)
+      showToast('导入失败，文件格式可能不正确。')
+    }
+  }
+
+  async function handleFileImport(event: Event) {
     const inp = event.target as HTMLInputElement
     const file = inp.files?.[0]
     if (!file) { inp.value = ''; return }
-    if (file.type !== 'application/json') {
+    if (!isJsonFile(file)) {
       showToast('请选择一个有效的 JSON 文件')
       inp.value = ''
       return
     }
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      try {
-        const content = e.target?.result as string
-        const parsed = normalizeQuestionBank(JSON.parse(content), file.name)
-        pendingImportQuestions.value = parsed
-        // 用导入文件名（去掉 .json）预填笔记本名称
-        importDialogNewNotebookName.value = file.name.replace(/\.json$/i, '')
-        showImportDialog.value = true
-      } catch (err) {
-        console.error('导入失败:', err)
-        showToast('导入失败，文件格式可能不正确。')
-      }
+    try {
+      prepareWrongQuestionImport(await readImportedText(file), file.name)
+    } finally {
+      inp.value = ''
     }
-    reader.readAsText(file)
-    inp.value = ''
   }
 
   // ── 导入对话框状态 ──
@@ -740,50 +774,48 @@ export function useQuiz() {
   }
 
   // ── 从文件导入外部题库 ──
-  async function importExternalBank(): Promise<void> {
-    // 检查是否运行在 Tauri 桌面环境
-    const isTauriEnv = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-    if (!isTauriEnv) {
-      showToast('导入题库功能仅在桌面版可用（浏览器开发模式下不可用）')
+  async function persistImportedBank(content: string, name: string) {
+    const normalized = normalizeQuestionBank(JSON.parse(content), name)
+    if (!normalized.length) throw new Error('文件中没有有效的题目数据')
+    const bankName = name.replace(/\.json$/i, '') || 'Imported bank'
+    await saveGeneratedBank(bankName, 'import-' + crypto.randomUUID(), content, [])
+  }
+
+  function handleExternalBankFileImport(event: Event) {
+    const input = event.target as HTMLInputElement
+    const file = input.files?.[0]
+    if (!file) { input.value = ''; return }
+    if (!isJsonFile(file)) {
+      showToast('请选择一个有效的 JSON 文件')
+      input.value = ''
       return
     }
+    void readImportedText(file)
+      .then((content) => persistImportedBank(content, file.name))
+      .catch((error) => {
+        console.error('导入题库失败:', error)
+        showToast('导入题库失败：' + (error instanceof Error ? error.message : '未知错误'))
+      })
+      .finally(() => { input.value = '' })
+  }
 
+  async function importExternalBank(): Promise<void> {
+    const isTauriEnv = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+    if (!isTauriEnv) {
+      showToast('请使用应用内文件选择器导入 JSON 题库。')
+      return
+    }
     try {
       const { open } = await import('@tauri-apps/plugin-dialog')
       const { readTextFile } = await import('@tauri-apps/plugin-fs')
-
-      const selected = await open({
-        multiple: false,
-        filters: [{ name: '题库 JSON', extensions: ['json'] }],
-      })
-      if (!selected) return // 用户取消了选择
-
+      const selected = await open({ multiple: false, filters: [{ name: '题库 JSON', extensions: ['json'] }] })
+      if (!selected || Array.isArray(selected)) return
       const content = await readTextFile(selected)
-      const normalized = normalizeQuestionBank(JSON.parse(content), selected)
-      if (!Array.isArray(normalized) || normalized.length === 0) {
-        throw new Error('文件中没有有效的题目数据')
-      }
-
-      // 从文件名中提取题库名称
       const fileName = selected.replace(/\\/g, '/').split('/').pop() ?? 'unknown.json'
-      const bankName = fileName.replace(/\.json$/i, '')
-      const filePath = `tauri-local:///${selected}` // 本地标识，用于加载时区分
-
-      // 添加到自定义题库列表
-      customBanks.value.push({ name: bankName, file: filePath, imported: true })
-
-      // 缓存已解析的题目，以便后续切换回来时快速加载
-      importedCache.set(filePath, normalized)
-
-      // 直接加载这个题库
-      questions.value = normalized
-      const types = new Set(questions.value.map((q) => q.type))
-      availableQuestionTypes.value = [...types].sort()
-      currentBankFile.value = filePath
-      try { localStorage.setItem(LAST_BANK_KEY, filePath) } catch { /* 忽略 */ }
-    } catch (e) {
-      console.error('导入题库失败:', e)
-      showToast(`导入题库失败: ${e instanceof Error ? e.message : '未知错误'}`)
+      await persistImportedBank(content, fileName)
+    } catch (error) {
+      console.error('导入题库失败:', error)
+      showToast('导入题库失败：' + (error instanceof Error ? error.message : '未知错误'))
     }
   }
 
@@ -897,15 +929,45 @@ export function useQuiz() {
     } else { appMode.value = 'start' }
   }
 
+  async function handleGeneratedBankChange(event: Event) {
+    try {
+      generatedBanks.value = await listGeneratedBanks()
+      const file = (event as CustomEvent<string>).detail
+      if (file) {
+        importedCache.delete(file)
+        await loadQuestions(file, false)
+        localStorage.setItem(LAST_BANK_KEY, file)
+      } else if (currentBankFile.value.startsWith(GENERATED_BANK_PREFIX) && !generatedBanks.value.some((bank) => bank.file === currentBankFile.value)) {
+        const fallback = allBanks.value[0]?.file ?? ''
+        currentBankFile.value = fallback
+        if (fallback) {
+          localStorage.setItem(LAST_BANK_KEY, fallback)
+          await loadQuestions(fallback, false)
+        } else {
+          localStorage.removeItem(LAST_BANK_KEY)
+          questions.value = []
+          availableQuestionTypes.value = []
+          isLoading.value = false
+        }
+      }
+    } catch (error) {
+      console.error('刷新本地题库失败:', error)
+      showToast('刷新本地题库失败，请重启应用后重试。')
+    }
+  }
+
   onMounted(async () => {
+    window.addEventListener(GENERATED_BANKS_CHANGED, handleGeneratedBankChange)
     await loadBanks()
-    loadQuestions()
+    if (currentBankFile.value) await loadQuestions()
+    else isLoading.value = false
     window.addEventListener('popstate', handlePopState)
   })
 
   onUnmounted(() => {
     flushSessionSave()
     window.removeEventListener('popstate', handlePopState)
+    window.removeEventListener(GENERATED_BANKS_CHANGED, handleGeneratedBankChange)
     stopScrollTracking()
   })
 
@@ -923,7 +985,7 @@ export function useQuiz() {
     handleToggleShuffle, handleClearPractice, handleAddToWrongBook, handleClearWrong,
     handleClearWrongAnswers,
     exportWrongQuestions, importWrongQuestions, handleFileImport, handleJumpTo,
-    importExternalBank,
+    importExternalBank, handleExternalBankFileImport,
     fileInput,
     // notebook management
     showImportDialog, importDialogNewNotebookName, pendingImportQuestions,

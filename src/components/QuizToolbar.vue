@@ -1,11 +1,6 @@
 <template>
   <div class="toolbar">
     <button @click="$emit('backHome')" class="toolbar-btn back-home">← 返回首页</button>
-    <button @click="$emit('toggleDark')" class="toolbar-btn dark-mode-toggle">
-      {{ isDarkMode ? '☀️' : '🌙' }}
-    </button>
-    <span class="toolbar-sep"></span>
-
     <!-- 做题 / 专项：清空 + 乱序 + 添加到错题 -->
     <template v-if="mode === 'practice' || mode === 'specialize'">
       <button @click="$emit('clearPractice')" class="toolbar-btn clear-wrong">重置/清空</button>
@@ -49,7 +44,6 @@
 
 <script setup lang="ts">
 defineProps<{
-  isDarkMode: boolean
   shuffleEnabled: boolean
   mode: string
   wrongCount: number
@@ -60,7 +54,6 @@ defineProps<{
 
 defineEmits<{
   backHome: []
-  toggleDark: []
   clearPractice: []
   toggleShuffle: []
   addToWrongBook: []
@@ -110,21 +103,6 @@ defineEmits<{
 }
 .toolbar-btn.back-home:hover {
   background-color: var(--color-bg-btn-secondary-hover);
-}
-.toolbar-btn.dark-mode-toggle {
-  background-color: var(--color-bg-btn-toggle);
-  color: var(--color-text-btn-toggle);
-  font-size: 0.9rem;
-  padding: 6px 8px;
-}
-.toolbar-btn.dark-mode-toggle:hover {
-  background-color: var(--color-bg-btn-secondary-hover);
-}
-.toolbar-sep {
-  width: 1px;
-  background: var(--color-border-divider);
-  margin: 0 4px;
-  align-self: stretch;
 }
 .toolbar-btn.export {
   background-color: var(--color-bg-btn-info);

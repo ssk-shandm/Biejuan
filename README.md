@@ -5,7 +5,7 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6?logo=typescript&logoColor=white)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-ffc131?logo=tauri&logoColor=white)
 
-别卷是一款面向刷题与错题复习的应用，基于 Vue 3、TypeScript 和 Tauri 2 构建。支持 Windows 桌面端，也可作为静态 Web 应用运行。
+别卷是一款面向刷题与错题复习的应用，基于 Vue 3、TypeScript 和 Tauri 2 构建。支持 Windows 桌面端、Android（arm64）和静态 Web 应用。
 
 ## 功能
 
@@ -13,21 +13,21 @@
 - 支持单选、多选、判断、填空、简答、程序分析、编程和复合题。
 - 支持 Markdown、代码高亮、题目图片、Mermaid 和 PlantUML 图表。
 - 支持文档转题库：提取 DOCX、PDF、XLSX/XLSM、TXT、Markdown、JSON 和 CSV，并通过可配置的模型转换为题库 JSON。
-- 提供深色模式；桌面端将错题数据保存到本地文件，Web 端使用浏览器 localStorage。
+- 提供深色模式；桌面端将错题数据保存到本地文件，Web 端使用浏览器 localStorage；Android 提供专用移动布局与底部导航。
 
 ## 技术栈
 
 | 用途 | 技术 |
 | --- | --- |
 | 前端 | Vue 3、TypeScript、Pinia、Vite |
-| 桌面应用 | Tauri 2 |
+| 桌面与 Android 应用 | Tauri 2 |
 | 内容展示 | marked、highlight.js、DOMPurify、Mermaid、PlantUML |
 | Web 部署 | Docker、Nginx |
 
 ## 环境要求
 
 - Node.js `^20.19.0` 或 `>=22.12.0`，以及 npm。
-- 桌面端开发和打包需要 Rust 与 Tauri 所需的系统依赖；Windows 打包还需要 Visual Studio C++ Build Tools，运行需要 WebView2。详见 [桌面打包指南](TAURI_GUIDE.md)。
+- 桌面端开发和打包需要 Rust 与 Tauri 所需的系统依赖；Windows 打包还需要 Visual Studio C++ Build Tools，运行需要 WebView2。详见 [桌面与 Android 打包指南](docs/TAURI_GUIDE.md)。
 - 使用 AI 文档转换需自行配置兼容 OpenAI 接口的模型服务；普通刷题不需要模型服务。
 
 ## 快速开始
@@ -108,7 +108,18 @@ docker run -d --name biejuan -p 8080:80 biejuan
 npm run tauri:build
 ```
 
-安装包位于 `src-tauri/target/release/bundle/nsis/`，可执行文件位于 `src-tauri/target/release/别卷.exe`。当前打包目标为 Windows NSIS 安装程序；具体步骤参见 [桌面打包指南](TAURI_GUIDE.md)。
+安装包位于 `src-tauri/target/release/bundle/nsis/`，可执行文件位于 `src-tauri/target/release/别卷.exe`。当前打包目标为 Windows NSIS 安装程序；具体步骤参见 [打包指南](docs/TAURI_GUIDE.md)。
+
+### Android（arm64）
+
+先安装 Android SDK/NDK、JDK 及 Rust Android 目标；首次构建需运行 `npx tauri android init`。
+
+```bash
+npm run icons:android
+npx tauri android build --apk --target aarch64 --ci
+```
+
+Android 的应用图标与桌面端一致，构建前会同步图标资源。正式发布的 APK 需要使用**专用发布密钥签名**，请勿上传调试版或未签名 APK；构建、签名与密钥备份详见 [打包指南](docs/TAURI_GUIDE.md)。Android 端与桌面端数据彼此独立，不会自动跨设备同步；下载安装请查看仓库的 Releases 页面。
 
 ## 常用命令
 
@@ -121,21 +132,23 @@ npm run tauri:build
 | `npm run config:check` | 检查配置与示例文件 |
 | `npm run build` | 类型检查并构建 Web 生产版 |
 | `npm run tauri:build` | 构建桌面程序和安装包 |
+| `npm run icons:android` | 同步 Android 图标到生成的工程 |
 
 ## 项目结构
 
 ```text
 src/              前端页面、组件、状态和业务逻辑
-src-tauri/        Tauri 桌面端代码与打包配置
+src-tauri/        Tauri 桌面端、Android 代码与打包配置
 public/config/    题库格式、运行时配置和示例
 public/subjects/  开发环境使用的本地题库
 public/images/    开发环境使用的题目图片
 config/           开发环境的本地模型配置
 scripts/          题库清单生成与构建辅助脚本
 docker/           Nginx 配置
+docs/             架构、设计、AI 转换及双端打包文档
 ```
 
-更多实现细节参见 [架构说明](ARCHITECTURE.md)和[设计文档](DESIGN.md)。
+更多实现细节参见 [架构说明](docs/ARCHITECTURE.md)和[设计文档](docs/DESIGN.md)。
 
 ## 许可证
 

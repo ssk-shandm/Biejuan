@@ -8,7 +8,7 @@
 
 本文档描述刷题助手的产品目标、系统边界、模块职责、核心数据结构、主要业务流程、Web/桌面双端策略及质量要求。它用于指导功能开发、代码评审、测试验收和后续重构。
 
-具体实现诊断与目录维护原则另见 `ARCHITECTURE.md`；题库字段规范另见 `public/config/question-schema.md`。
+具体实现诊断与目录维护原则另见 `ARCHITECTURE.md`；题库字段规范另见 `../public/config/question-schema.md`。
 
 ## 2. 产品定位
 

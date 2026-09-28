@@ -7,6 +7,9 @@
     "shell:allow-open",
     "dialog:default",
     "dialog:allow-open",
+    "dialog:allow-save",
+    "fs:allow-write-file",
+    "fs:allow-read-text-file",
     "fs:allow-appdata-read-recursive",
     "fs:allow-appdata-write-recursive"
   ]

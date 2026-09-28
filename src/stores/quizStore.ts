@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import type { Question, WrongQuestionEntry, WrongNotebook } from '../types'
 import { showToast } from '../composables/useToast'
 import { normalizeQuestionBank } from '../utils/questionSchema'
+import { saveExportBlob } from '../services/fileService'
 
 const WRONG_ENTRIES_KEY = 'wrongEntriesDB'
 const NOTEBOOKS_KEY = 'wrongNotebooksDB'
@@ -213,7 +214,7 @@ export const useQuizStore = defineStore('quiz', () => {
     }
 
   }
-  void loadPersistedData()
+  const persistedDataReady = loadPersistedData()
 
   // ── 合并持久化：浏览器 localStorage + 桌面 appData 单文件 ──
   function saveCombinedData() {
@@ -227,7 +228,7 @@ export const useQuizStore = defineStore('quiz', () => {
     }
     const json = JSON.stringify(data)
     localStorage.setItem(COMBINED_LOCAL_KEY, json)
-    void tauriStorageReady.then(() => writeTauriFile(COMBINED_FILE, json))
+    return tauriStorageReady.then(() => writeTauriFile(COMBINED_FILE, json))
   }
 
   // 所有数据变化共享一个防抖 watch
@@ -269,6 +270,18 @@ export const useQuizStore = defineStore('quiz', () => {
     }
   }
 
+  /** Remove every notebook, wrong answer and guessed-right entry for deleted banks. */
+  async function removeBanksData(bankFiles: string[]) {
+    await persistedDataReady
+    const removed = new Set(bankFiles)
+    const notebookIds = new Set(notebooks.value.filter(n => removed.has(n.bankFile)).map(n => n.id))
+    notebooks.value = notebooks.value.filter(n => !removed.has(n.bankFile))
+    wrongEntries.value = wrongEntries.value.filter(e => !removed.has(e.bankFile) && !(e.notebookId && notebookIds.has(e.notebookId)))
+    guessedRightBank.value = guessedRightBank.value.filter(e => !removed.has(e.bankFile))
+    for (const file of bankFiles) delete activeNotebookByBank.value[file]
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+    await saveCombinedData()
+  }
   /** 重命名笔记本 */
   function renameNotebook(notebookId: string, newName: string) {
     const nb = notebooks.value.find((n) => n.id === notebookId)
@@ -435,7 +448,7 @@ export const useQuizStore = defineStore('quiz', () => {
   // ── 导入导出 ──
 
   /** 导出指定笔记本的错题为 JSON 文件 */
-  function exportNotebook(notebookId: string, allQuestions: Question[]) {
+  async function exportNotebook(notebookId: string, allQuestions: Question[]) {
     const entries = getEntriesByNotebook(notebookId)
     if (entries.length === 0) {
       showToast('该错题本是空的！')
@@ -445,26 +458,15 @@ export const useQuizStore = defineStore('quiz', () => {
     const nums = [...new Set(entries.map((e) => e.questionNumber))]
     const wrongQuestions = allQuestions.filter((q) => nums.includes(q.number))
 
-    const dataStr = JSON.stringify(wrongQuestions, null, 2)
-    const blob = new Blob([dataStr], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-
     const nb = notebooks.value.find((n) => n.id === notebookId)
     const fileName = nb ? nb.name.replace(/[/\\?%*:|"<>]/g, '_') + '.json' : 'wrong_questions_backup.json'
-
-    const a = document.createElement('a')
-    a.href = url
-    a.download = fileName
-    a.style.display = 'none'
-    document.body.appendChild(a)
-    a.click()
-
-    setTimeout(() => {
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-    }, 150)
-
-    showToast(`成功导出 ${wrongQuestions.length} 道错题！`)
+    try {
+      const saved = await saveExportBlob(fileName, new Blob([JSON.stringify(wrongQuestions, null, 2)], { type: 'application/json' }))
+      if (saved) showToast(`成功导出 ${wrongQuestions.length} 道错题！`)
+    } catch (error) {
+      console.error('Notebook export failed:', error)
+      showToast('导出错题本失败，请重试')
+    }
   }
 
   /** 导出当前活跃笔记本（兼容旧接口） */
@@ -603,6 +605,7 @@ export const useQuizStore = defineStore('quiz', () => {
     activeNotebookByBank,
     createNotebook,
     deleteNotebook,
+    removeBanksData,
     renameNotebook,
     getNotebooksByBank,
     getAllNotebooks,

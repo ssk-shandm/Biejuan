@@ -1,21 +1,22 @@
 {
   "name": "aaa",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
   },
   "scripts": {
-    "predev": "node scripts/generate-banks.mjs",
+    "predev": "node scripts/generate-banks.mjs && node scripts/sync-android-icons.mjs",
     "dev": "vite --host 0.0.0.0",
-    "prebuild": "node scripts/generate-banks.mjs",
+    "prebuild": "node scripts/generate-banks.mjs && node scripts/sync-android-icons.mjs",
     "build": "run-p type-check \"build-only {@}\" --",
     "preview": "vite preview",
     "build-only": "node scripts/prepare-public-build.mjs && vite build",
     "type-check": "vue-tsc --build",
     "lint": "eslint . --fix --cache",
     "format": "prettier --write src/",
+    "icons:android": "node scripts/sync-android-icons.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",

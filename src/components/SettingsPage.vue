@@ -17,6 +17,11 @@
           </div>
         </div>
 
+        <div class="settings-quick-stats" aria-label="当前状态">
+          <div><strong>{{ banks.length }}</strong><span>可用题库</span></div>
+          <div><strong>{{ selectedBankName }}</strong><span>当前题库</span></div>
+        </div>
+
         <nav class="settings-nav" aria-label="设置分类">
           <button
             v-for="item in settingsSections"
@@ -46,9 +51,18 @@
           <p class="content-eyebrow">SETTINGS</p>
           <h2>{{ activeSectionMeta.label }}</h2>
           <p>{{ activeSectionMeta.summary }}</p>
+          <div class="settings-header-meta">
+            <span class="settings-live-dot"></span>
+            <span>本地数据已就绪</span>
+            <span class="settings-header-divider"></span>
+            <span>{{ banks.length }} 个题库</span>
+          </div>
         </header>
 
         <div class="content-body">
+          <div v-if="converterVisited" v-show="activeSection === 'ai-convert'">
+            <AiDocumentConverter @configure="activeSection = 'ai-model'" @started="activeSection = 'runtime-terminal'" />
+          </div>
           <template v-if="activeSection === 'resources'">
             <section class="settings-card">
               <div class="card-heading">
@@ -56,7 +70,7 @@
                   <span class="section-label">本地内容</span>
                   <h3>题库资源</h3>
                   <p class="card-description">
-                    桌面开发版打开源码的 public 目录，安装版打开安装资源中的 public 目录；Web 版打开当前部署携带的离线资源。
+                    下方显示应用当前可用的题库。本机转换题库存储在应用数据中，可在这里删除；public 文件夹仅包含随项目提供的只读资源。
                   </p>
                 </div>
               </div>
@@ -90,6 +104,7 @@
                 </button>
               </div>
 
+              <BankManager :banks="banks" :selected-bank="selectedBank" />
               <p v-if="resourceMessage" class="status" :class="resourceMessageType">
                 {{ resourceMessage }}
               </p>
@@ -98,10 +113,6 @@
 
           <template v-else-if="activeSection === 'ai-model'">
             <AiModelSettings />
-          </template>
-
-          <template v-else-if="activeSection === 'ai-convert'">
-            <AiDocumentConverter @configure="activeSection = 'ai-model'" />
           </template>
 
           <template v-else-if="activeSection === 'runtime-terminal'">
@@ -146,7 +157,48 @@
             </section>
           </template>
 
-          <template v-else>
+          <template v-else-if="activeSection === 'preferences'">
+            <section class="settings-card preferences-card">
+              <div class="card-heading">
+                <div>
+                  <span class="section-label">应用偏好</span>
+                  <h3>显示与更新</h3>
+                  <p class="card-description">集中管理桌面端的显示模式和版本检查行为。</p>
+                </div>
+              </div>
+
+              <div class="preference-list">
+                <label class="preference-row">
+                  <span class="preference-copy">
+                    <strong>黑夜模式</strong>
+                    <small>切换桌面端的深色界面。</small>
+                  </span>
+                  <input
+                    class="settings-switch"
+                    type="checkbox"
+                    :checked="isDarkMode"
+                    aria-label="黑夜模式"
+                    @change="setDarkMode(($event.target as HTMLInputElement).checked)"
+                  />
+                </label>
+                <label class="preference-row">
+                  <span class="preference-copy">
+                    <strong>每次启动时自动检查更新</strong>
+                    <small>应用启动后自动查询 GitHub 最新 Release。</small>
+                  </span>
+                  <input
+                    class="settings-switch"
+                    type="checkbox"
+                    :checked="autoCheckUpdates"
+                    aria-label="每次启动时自动检查更新"
+                    @change="setAutoCheckUpdates(($event.target as HTMLInputElement).checked)"
+                  />
+                </label>
+              </div>
+            </section>
+          </template>
+
+          <template v-else-if="activeSection === 'about'">
             <section class="settings-card update-card">
               <div class="card-heading">
                 <div>
@@ -215,27 +267,19 @@
       </main>
     </div>
 
-    <Teleport to="body">
-      <div v-if="updateInfo" class="dialog-overlay" @click.self="clearUpdate">
-        <div class="update-dialog" role="dialog" aria-modal="true" aria-labelledby="update-title">
-          <h3 id="update-title">发现新版本 v{{ updateInfo.version }}</h3>
-          <p v-if="updateInfo.releaseNotes" class="release-notes">{{ updateInfo.releaseNotes }}</p>
-          <div class="dialog-actions">
-            <button class="primary-btn" type="button" @click="openDownload">前往 GitHub 下载</button>
-            <button class="secondary-btn" type="button" @click="clearUpdate">稍后再说</button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeMount, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeMount, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AiDocumentConverter from './AiDocumentConverter.vue'
 import AiModelSettings from './AiModelSettings.vue'
 import RuntimeTerminal from './RuntimeTerminal.vue'
+import BankManager from './BankManager.vue'
+import type { BankEntry } from '../composables/useQuiz'
 import { useVersion } from '../composables/useVersion'
+import { useDarkMode } from '../composables/useDarkMode'
+import { useUpdatePreferences } from '../composables/useUpdatePreferences'
 import {
   APP_NAME,
   COPYRIGHT_LINE,
@@ -254,11 +298,19 @@ import {
 import { openExternalUrl } from '../utils/openExternal'
 import { openContentLocation, type ContentLocation } from '../utils/openContentLocation'
 
+const props = defineProps<{ banks: BankEntry[]; selectedBank: string }>()
 const emit = defineEmits<{
   back: []
 }>()
 
 const settingsSections = [
+  {
+    id: 'preferences',
+    icon: '⚙',
+    label: '偏好设置',
+    description: '显示与更新',
+    summary: '管理黑夜模式、自动更新检查等应用偏好。',
+  },
   {
     id: 'resources',
     icon: '▣',
@@ -306,11 +358,14 @@ const settingsSections = [
 type SettingsSection = (typeof settingsSections)[number]['id']
 
 const activeSection = ref<SettingsSection>('about')
+const converterVisited = ref(false)
+watch(activeSection, section => { if (section === 'ai-convert') converterVisited.value = true })
 const activeSectionMeta = computed(
   () => settingsSections.find((item) => item.id === activeSection.value) ?? settingsSections[0],
 )
+const selectedBankName = computed(() => props.banks.find((bank) => bank.file === props.selectedBank)?.name ?? '未选择')
 
-const { version, isUpdating, updateInfo, updateError, checkUpdate, clearUpdate } = useVersion()
+const { version, isUpdating, updateError, checkUpdate } = useVersion()
 const plantUmlServer = ref(getPlantUmlServerOverride())
 const effectivePlantUmlServer = ref(DEFAULT_PLANTUML_SERVER)
 const plantUmlMessage = ref('')
@@ -319,6 +374,12 @@ const openingLocation = ref<ContentLocation | null>(null)
 const resourceMessage = ref('')
 const resourceMessageType = ref<'success' | 'error'>('success')
 const openError = ref('')
+const { isDarkMode, toggleDarkMode } = useDarkMode()
+const { autoCheckUpdates, setAutoCheckUpdates } = useUpdatePreferences()
+
+function setDarkMode(value: boolean) {
+  if (isDarkMode.value !== value) toggleDarkMode()
+}
 
 const settingsPageLockClass = 'settings-page-open'
 
@@ -389,17 +450,6 @@ async function openLink(url: string) {
   }
 }
 
-async function openDownload() {
-  if (!updateInfo.value) return
-  try {
-    await openExternalUrl(updateInfo.value.downloadUrl)
-    clearUpdate()
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '无法打开下载页面'
-    clearUpdate()
-    updateError.value = message
-  }
-}
 </script>
 
 <style scoped>
@@ -958,6 +1008,81 @@ async function openDownload() {
   word-break: break-all;
 }
 
+
+.preference-list {
+  display: grid;
+  gap: 12px;
+}
+
+.preference-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 15px 0;
+  border-bottom: 1px solid var(--color-border-divider);
+  cursor: pointer;
+}
+
+.preference-row:last-child {
+  border-bottom: 0;
+}
+
+.preference-copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.preference-copy strong {
+  color: var(--color-text-primary);
+}
+
+.preference-copy small {
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.settings-switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 46px;
+  height: 26px;
+  margin: 0;
+  border: 0;
+  border-radius: 999px;
+  outline: none;
+  appearance: none;
+  background: var(--color-bg-input-disabled);
+  cursor: pointer;
+  transition: background-color .2s ease, box-shadow .2s ease;
+}
+
+.settings-switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .22);
+  transition: transform .2s ease;
+}
+
+.settings-switch:checked {
+  background: var(--color-bg-btn-primary);
+}
+
+.settings-switch:checked::after {
+  transform: translateX(20px);
+}
+
+.settings-switch:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 28%, transparent);
+}
+
 .dialog-overlay {
   position: fixed;
   inset: 0;
@@ -1150,4 +1275,20 @@ async function openDownload() {
     width: 100%;
   }
 }
+/* Settings dashboard accents. Kept CSS-only so the desktop shell stays fast. */
+.settings-quick-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 16px 20px 4px; }
+.settings-quick-stats > div { display: grid; gap: 3px; min-width: 0; padding: 10px; border: 1px solid var(--color-border-divider); border-radius: 10px; background: var(--color-bg-container); }
+.settings-quick-stats strong { overflow: hidden; color: var(--color-text-primary); font-size: .82rem; text-overflow: ellipsis; white-space: nowrap; }
+.settings-quick-stats span { color: var(--color-text-muted); font-size: .68rem; }
+.settings-header-meta { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--color-text-muted); font-size: .74rem; }
+.settings-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 4px color-mix(in srgb, #22c55e 14%, transparent); animation: settings-pulse 2.4s ease-in-out infinite; }
+.settings-header-divider { width: 1px; height: 13px; background: var(--color-border-divider); }
+.settings-nav-item { transition: transform .18s ease, background-color .18s ease, border-color .18s ease, box-shadow .18s ease; }
+.settings-nav-item:hover { transform: translateX(2px); box-shadow: 0 5px 12px rgba(15, 23, 42, .05); }
+.settings-nav-item.active { box-shadow: inset 3px 0 0 var(--color-accent), 0 6px 16px rgba(15, 23, 42, .045); }
+.settings-card { animation: settings-card-in .26s ease both; }
+@keyframes settings-card-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+@keyframes settings-pulse { 0%, 100% { opacity: .72; transform: scale(.9); } 50% { opacity: 1; transform: scale(1.16); } }
+@media (prefers-reduced-motion: reduce) { .settings-live-dot, .settings-card, .settings-nav-item { animation: none !important; transition: none !important; } }
+
 </style>

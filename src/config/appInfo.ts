@@ -1,5 +1,5 @@
 export const APP_NAME = '别卷'
-export const APP_VERSION_FALLBACK = '0.1.0'
+export const APP_VERSION_FALLBACK = '0.1.2'
 export const GITHUB_OWNER = 'ssk-shandm'
 export const GITHUB_REPO = 'exam'
 export const REPOSITORY_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}`

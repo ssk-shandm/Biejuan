@@ -10,7 +10,7 @@
     "acceptedKinds": ["plain-text", "markdown", "docx-extracted-text", "ocr-text"],
     "chunking": {
       "enabled": true,
-      "maxCharacters": 12000,
+      "maxCharacters": 7000,
       "overlapCharacters": 300
     }
   },

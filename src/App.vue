@@ -1,213 +1,110 @@
 <template>
-<Transition name="page-fade" mode="out-in">
-  <div v-if="isLoading" key="loading" class="quiz-container-loading">
-    <h2 class="loading-text">题库加载中...</h2>
-  </div>
+  <Transition name="page-fade" mode="out-in">
+    <LoadingView v-if="isLoading" key="loading" />
+    <AppScreenHost
+      v-else
+      :app-mode="appMode"
+      :all-banks="allBanks"
+      :current-bank-file="currentBankFile"
+      :available-question-types="availableQuestionTypes"
+      :current-bank-notebooks="currentBankNotebooks"
+      :active-notebook-for-bank="activeNotebookForBank"
+      :active-notebook-for-bank-obj="activeNotebookForBankObj"
+      :current-bank-name="currentBankName"
+      :wrong-count="wrongCount"
+      :notebook-entry-counts="notebookEntryCounts"
+      :render-error="renderError"
+      :shuffled-questions="shuffledQuestions"
+      :answer-sheet="answerSheet"
+      :current-question-index="currentQuestionIndex"
+      :total-questions="totalQuestions"
+      :score="score"
+      :wrong-display-entry-ids="wrongDisplayEntryIds"
+      :shuffle-enabled="shuffleEnabled"
+      :active-notebook-name="activeNotebookName"
+      @start="handleStartGame"
+      @start-specialize="handleStartSpecialize"
+      @change-bank="handleBankChange"
+      @back-home="handleBackToHome"
+      @back-settings="handleBackToSettings"
+      @import-wrong="importWrongQuestions"
+      @export-wrong="exportWrongQuestions"
+      @set-active-notebook="(id: string) => quizStore.setActiveNotebook(currentBankFile, id)"
+      @start-practice="(id: string) => { quizStore.setActiveNotebook(currentBankFile, id); handleStartGame('wrong'); }"
+      @delete-notebook="deleteNotebookById"
+      @rename-notebook="(id: string, name: string) => quizStore.renameNotebook(id, name)"
+      @backup-all="handleBackupAll"
+      @restore-all="handleRestoreAll"
+      @reset-error="() => { renderError = ''; appMode = 'start' }"
+      @jump-to="(idx: number) => handleJumpTo(idx, isDarkMode)"
+      @clear-wrong="handleClearWrong"
+      @clear-practice="handleClearPractice"
+      @toggle-shuffle="handleToggleShuffle"
+      @add-to-wrong-book="handleAddToWrongBook"
+      @clear-wrong-answers="handleClearWrongAnswers"
+      @answer-update="(answer, question) => handleAnswerUpdate(answer, question)"
+      @submit="handleSubmit"
+      @compound-submit="handleCompoundSubmit"
+      @sub-submit="handleSubSubmit"
+      @submit-exam="submitExam"
+    />
+  </Transition>
 
-  <StartScreen
-    v-else-if="appMode === 'start'"
-    key="start"
-    @start="handleStartGame"
-    @start-specialize="handleStartSpecialize"
-    :banks="allBanks"
-    :selected-bank="currentBankFile"
-    :question-types="availableQuestionTypes"
-    @changeBank="handleBankChange"
-    class="quiz-container-start"
-  />
-
-  <SettingsPage
-    v-else-if="appMode === 'settings'"
-    key="settings"
-    @back="handleBackToHome"
-  />
-
-  <AboutPage
-    v-else-if="appMode === 'about'"
-    key="about"
-    @back="handleBackToSettings"
-  />
-
-  <!-- 错题本管理页面 -->
-  <WrongNotebookManager
-    v-else-if="appMode === 'wrong-manage'"
-    key="wrong-manage"
-    :notebooks="currentBankNotebooks"
-    :active-id="activeNotebookForBank"
-    :active-notebook="activeNotebookForBankObj"
-    :bank-name="currentBankName"
-    :total-entry-count="wrongCount"
-    :entry-counts="notebookEntryCounts"
-    @back="handleBackToHome"
-    @import="importWrongQuestions"
-    @export="exportWrongQuestions"
-    @set-active="(id: string) => quizStore.setActiveNotebook(currentBankFile, id)"
-    @start-practice="(id: string) => { quizStore.setActiveNotebook(currentBankFile, id); handleStartGame('wrong'); }"
-    @delete="deleteNotebookById"
-    @rename="(id: string, name: string) => quizStore.renameNotebook(id, name)"
-    @backup-all="handleBackupAll"
-    @restore-all="handleRestoreAll"
-  />
-  <div v-else-if="['practice','exam','endorse','wrong','specialize'].includes(appMode)" key="quiz" class="quiz-layout">
-    <div v-if="renderError" style="color:red;padding:40px;text-align:center;">
-      <h2>渲染错误</h2>
-      <pre>{{ renderError }}</pre>
-      <button @click="renderError = ''; appMode = 'start'">返回首页</button>
-    </div>
-    <template v-else>
-      <div class="quiz-sidebar">
-        <AnswerCard
-          :questions="shuffledQuestions"
-          :answer-sheet="answerSheet"
-          :current-index="currentQuestionIndex"
-          :app-mode="appMode"
-          :bank-file="currentBankFile"
-          @jumpTo="(idx: number) => handleJumpTo(idx, isDarkMode)"
-          @clearAllWrong="handleClearWrong"
-        />
-      </div>
-      <div class="quiz-container quiz-main-area">
-        <QuizToolbar
-          :is-dark-mode="isDarkMode"
-          :shuffle-enabled="shuffleEnabled"
-          :mode="appMode"
-          :wrong-count="wrongCount"
-          :question-count="shuffledQuestions.length"
-          :notebook-name="activeNotebookName"
-          @backHome="handleBackToHome"
-          @toggleDark="toggleDarkMode"
-          @clearPractice="handleClearPractice"
-          @toggleShuffle="handleToggleShuffle"
-          @addToWrongBook="handleAddToWrongBook"
-          @clearWrong="handleClearWrong"
-          @clearWrongAnswers="handleClearWrongAnswers"
-          @exportWrong="exportWrongQuestions"
-        />
-        <div
-          v-for="(question, index) in shuffledQuestions"
-          :key="question.number"
-          :id="'q-' + question.number"
-          class="question-list-item"
-        >
-          <QuestionDisplay
-            v-if="index >= windowStart && index <= windowEnd"
-            :question="question"
-            :question-number="index + 1"
-            :total-questions="totalQuestions"
-            :model-value="answerSheet.get(question.number)?.userAnswer ?? null"
-            @update:modelValue="handleAnswerUpdate($event, question)"
-            @submit="handleSubmit(question)"
-            @compound-submit="handleCompoundSubmit(question, $event)"
-            @compound-submit-sub="(subId: number, ua: string) => handleSubSubmit(question, subId, ua)"
-            :show-result="answerSheet.get(question.number)?.showResult || false"
-            :disabled="appMode === 'endorse'"
-            :is-correct="answerSheet.get(question.number)?.isCorrect ?? false"
-            :sub-results="answerSheet.get(question.number)?.subAnswers"
-            :app-mode="appMode"
-            :bank-file="currentBankFile"
-            :wrong-entry-id="wrongDisplayEntryIds[index] ?? 0"
-          />
-          <div v-else class="question-placeholder">
-            <span class="placeholder-idx">{{ index + 1 }}.</span>
-            <span class="placeholder-type">{{ question.type }}</span>
-            <span class="placeholder-text">{{ question.question }}</span>
-          </div>
-        </div>
-        <div class="list-nav" v-if="appMode === 'exam'">
-          <button @click="submitExam" class="submit-exam-btn">提交试卷</button>
-        </div>
-      </div>
-    </template>
-  </div>
-
-  <ExamReview
-    v-else-if="appMode === 'review'"
-    key="review"
-    :questions="shuffledQuestions"
-    :answer-sheet="answerSheet"
-    :score="score"
-    @restart="handleBackToHome"
-  />
-</Transition>
-
-<!-- 导入对话框（start 和 wrong-manage 模式共享） -->
-<template v-if="appMode === 'start' || appMode === 'wrong-manage'">
-    <input type="file" ref="fileInput" @change="handleFileImport" style="display:none" accept=".json" />
+  <template v-if="appMode === 'start' || appMode === 'wrong-manage'">
+    <input ref="fileInput" type="file" accept=".json" style="display:none" @change="handleFileImport" />
     <div v-if="showImportDialog" class="import-dialog-overlay" @click.self="doConfirmImport">
       <div class="import-dialog">
-      <h3>导入错题</h3>
-      <p>发现 {{ pendingImportQuestions?.length || 0 }} 道错题，请选择导入方式：</p>
-
-      <div class="import-option">
-        <label>
-          <input type="radio" v-model="importDialogChoice" value="new" />
-          新建错题本：
-        </label>
-        <input
-          v-if="importDialogChoice === 'new'"
-          v-model="importDialogNewNotebookName"
-          type="text"
-          class="import-nb-name"
-          placeholder="请输入错题本名称"
-        />
-      </div>
-
-      <div class="import-option">
-        <label>
-          <input type="radio" v-model="importDialogChoice" value="existing" />
-          导入到已有错题本：
-        </label>
-        <select
-          v-if="importDialogChoice === 'existing'"
-          v-model="importDialogTargetNotebook"
-          class="import-nb-select"
-        >
-          <option v-for="nb in currentBankNotebooks" :key="nb.id" :value="nb.id">
-            {{ nb.name }} ({{ getNotebookEntryCount(nb.id) }} 题)
-          </option>
-        </select>
-        <span v-if="importDialogChoice === 'existing' && currentBankNotebooks.length === 0" class="no-notebook-hint">
-          当前题库还没有错题本，请先新建一个。
-        </span>
-      </div>
-
-      <div class="import-dialog-actions">
-        <button class="toolbar-btn cancel" @click="cancelImport">取消</button>
-        <button class="toolbar-btn import" @click="doConfirmImport" :disabled="!canConfirmImport">
-          确认导入
-        </button>
+        <h3>导入错题</h3>
+        <p>发现 {{ pendingImportQuestions?.length || 0 }} 道错题，请选择导入方式：</p>
+        <div class="import-option">
+          <label><input v-model="importDialogChoice" type="radio" value="new" /> 新建错题本：</label>
+          <input v-if="importDialogChoice === 'new'" v-model="importDialogNewNotebookName" type="text" class="import-nb-name" placeholder="请输入错题本名称" />
+        </div>
+        <div class="import-option">
+          <label><input v-model="importDialogChoice" type="radio" value="existing" /> 导入到已有错题本：</label>
+          <select v-if="importDialogChoice === 'existing'" v-model="importDialogTargetNotebook" class="import-nb-select">
+            <option v-for="nb in currentBankNotebooks" :key="nb.id" :value="nb.id">{{ nb.name }} ({{ getNotebookEntryCount(nb.id) }} 题)</option>
+          </select>
+          <span v-if="importDialogChoice === 'existing' && currentBankNotebooks.length === 0" class="no-notebook-hint">当前题库还没有错题本，请先新建一个。</span>
+        </div>
+        <div class="import-dialog-actions">
+          <button class="toolbar-btn cancel" type="button" @click="cancelImport">取消</button>
+          <button class="toolbar-btn import" type="button" :disabled="!canConfirmImport" @click="doConfirmImport">确认导入</button>
+        </div>
       </div>
     </div>
-  </div>
   </template>
-
-  <!-- 全局提示组件 -->
   <ToastContainer />
+  <UpdateDialog />
 </template>
-
 <script setup lang="ts">
-import { onErrorCaptured, ref, computed } from 'vue'
-import StartScreen from './components/StartScreen.vue'
-import SettingsPage from './components/SettingsPage.vue'
-import AboutPage from './components/AboutPage.vue'
-import WrongNotebookManager from './components/WrongNotebookManager.vue'
-import AnswerCard from './components/AnswerCard.vue'
-import QuestionDisplay from './components/QuestionDisplay.vue'
-import ExamReview from './components/ExamReview.vue'
-import QuizToolbar from './components/QuizToolbar.vue'
+import { onErrorCaptured, onMounted, ref, computed } from 'vue'
+import AppScreenHost from './components/shared/AppScreenHost.vue'
 import ToastContainer from './components/ToastContainer.vue'
+import UpdateDialog from './components/UpdateDialog.vue'
+import LoadingView from './components/shared/LoadingView.vue'
 import { useDarkMode } from './composables/useDarkMode'
 import { useQuiz } from './composables/useQuiz'
-import { showToast, showConfirm } from './composables/useToast'
 import { useQuizStore } from './stores/quizStore'
+import { useWrongNotebookActions } from './composables/useWrongNotebookActions'
+import { useVersion } from './composables/useVersion'
+import { useUpdatePreferences } from './composables/useUpdatePreferences'
 
-const { isDarkMode, toggleDarkMode } = useDarkMode()
+const { isDarkMode } = useDarkMode()
+const { checkUpdate } = useVersion()
+const { autoCheckUpdates } = useUpdatePreferences()
+onMounted(() => {
+  if (autoCheckUpdates.value) {
+    void checkUpdate()
+  }
+})
+
 const q = useQuiz()
 const quizStore = useQuizStore()
 
 // destructure everything used in template
 const {
-  isLoading, appMode, currentBankFile, availableQuestionTypes, renderError,
+  isLoading, appMode, currentBankFile, availableQuestionTypes, renderError, questions,
   shuffledQuestions, answerSheet, currentQuestionIndex, totalQuestions, score,
   wrongCount, wrongDisplayEntryIds, fileInput, shuffleEnabled,
   handleStartGame, handleStartSpecialize, handleBankChange, handleBackToHome,
@@ -220,12 +117,6 @@ const {
   handleClearWrongAnswers,
 } = q
 
-// ── 窗口化渲染：所有题目容器 div 保留（维持自然滚动），但只有当前题前2后4渲染 QuestionDisplay 组件 ──
-const BEFORE_WINDOW = 2
-const AFTER_WINDOW = 4
-
-const windowStart = computed(() => Math.max(0, currentQuestionIndex.value - BEFORE_WINDOW))
-const windowEnd = computed(() => Math.min(shuffledQuestions.value.length - 1, currentQuestionIndex.value + AFTER_WINDOW))
 
 function handleBackToSettings() {
   if (window.history.state?.mode === 'about') {
@@ -289,62 +180,7 @@ const currentBankName = computed(() => {
   return allBanks.value.find(b => b.file === currentBankFile.value)?.name || currentBankFile.value
 })
 
-async function deleteNotebookById(notebookId: string) {
-  const nb = quizStore.notebooks.find((n) => n.id === notebookId)
-  if (!nb) return
-  const count = quizStore.getEntriesByNotebook(notebookId).length
-  const ok = await showConfirm(`确定要删除错题本「${nb.name}」吗？其中的 ${count} 道错题也将被删除。`)
-  if (!ok) return
-  quizStore.deleteNotebook(notebookId)
-}
-
-/** 备份全部错题本数据为 JSON 文件下载 */
-function handleBackupAll() {
-  const json = quizStore.exportAllDataAsJson()
-  const blob = new Blob([json], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const dateStr = new Date().toISOString().slice(0, 10)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `错题本备份_${dateStr}.json`
-  a.style.display = 'none'
-  document.body.appendChild(a)
-  a.click()
-  setTimeout(() => {
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-  }, 150)
-}
-
-/** 从备份 JSON 文件恢复全部错题本数据 */
-async function handleRestoreAll(event: Event) {
-  const inp = event.target as HTMLInputElement
-  const file = inp.files?.[0]
-  if (!file) { inp.value = ''; return }
-  if (file.type !== 'application/json') {
-    showToast('请选择一个有效的 JSON 文件')
-    inp.value = ''
-    return
-  }
-  const ok = await showConfirm('确定要用备份文件覆盖全部错题本数据吗？当前所有错题数据将被替换。')
-  if (!ok) {
-    inp.value = ''
-    return
-  }
-  const reader = new FileReader()
-  reader.onload = async (e) => {
-    try {
-      const content = e.target?.result as string
-      const result = quizStore.importAllDataFromJson(content)
-      showToast(result.message)
-    } catch (err) {
-      showToast('恢复失败：文件格式不正确')
-      console.error(err)
-    }
-  }
-  reader.readAsText(file)
-  inp.value = ''
-}
+const { deleteNotebookById, handleBackupAll, handleRestoreAll } = useWrongNotebookActions(questions)
 
 onErrorCaptured((err) => { console.error('[渲染错误]', err, err?.stack); renderError.value = String(err) + (err?.stack ? '\n' + err.stack : ''); return false })
 </script>
