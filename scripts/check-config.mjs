@@ -40,19 +40,20 @@ for (const { path, config: prompt } of loaded.prompts) {
     throw new Error(`${path} 使用了未声明变量: ${undeclared.join(', ')}`)
   }
 
-  const schemaPath = resolveConfigReference(path, prompt.response?.schema)
-  if (schemaPath !== loaded.outputSchemaPath) {
-    throw new Error(`${path} 的输出 Schema 与 framework.outputSchema 不一致`)
+  // 中间步骤（结构分析、答案匹配）输出的是辅助 JSON，可以不声明 Schema；声明了就必须指向题库 Schema
+  if (prompt.response?.schema) {
+    const schemaPath = resolveConfigReference(path, prompt.response.schema)
+    if (schemaPath !== loaded.outputSchemaPath) {
+      throw new Error(`${path} 的输出 Schema 与 framework.outputSchema 不一致`)
+    }
   }
+
+  // 用占位值渲染一次，确认必填变量和占位符一致
+  const sampleValues = Object.fromEntries((prompt.variables?.required ?? []).map((name) => [name, `示例 ${name}`]))
+  renderPrompt(prompt, sampleValues)
 }
 
-const convertPrompt = loaded.prompts.find(({ step }) => step.id === 'convert')?.config
-if (!convertPrompt) throw new Error('LLM framework 缺少 convert 步骤')
-renderPrompt(convertPrompt, {
-  bankName: '配置检查题库',
-  sourceName: 'config-check.txt',
-  sourceText: '1. 示例题目\n答案：示例答案',
-})
+if (!loaded.prompts.some(({ step }) => step.id === 'convert')) throw new Error('LLM framework 缺少 convert 步骤')
 
 const examplePath = join(CONFIG_DIR, 'examples', 'question-bank.example.json')
 const exampleBank = readJsonFile(examplePath)

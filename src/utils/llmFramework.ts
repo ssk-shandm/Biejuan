@@ -7,7 +7,22 @@ export type LlmPromptConfig = {
   id?: string
   name?: string
   version?: string
+  variables?: {
+    required?: string[]
+    optional?: Record<string, string>
+  }
   messages: LlmPromptMessage[]
+  response?: {
+    format?: string
+    schema?: string
+    root?: 'array' | 'object'
+    /** 请求时附带 response_format: { type: 'json_object' }，服务商不支持时自动降级 */
+    jsonObject?: boolean
+  }
+  request?: {
+    /** false 时请求关闭模型推理（thinking），适合结构化抽取；服务商不支持时自动忽略 */
+    thinking?: boolean
+  }
 }
 
 export type LlmPipelineStep = {
@@ -26,16 +41,25 @@ export type LlmFrameworkConfig = {
     chunking?: {
       enabled: boolean
       maxCharacters: number
-      overlapCharacters?: number
+      /** 分段字符数不超过 maxOutputTokens × 该系数，避免输出被截断 */
+      outputTokenRatio?: number
     }
+    analysis?: {
+      maxCharacters: number
+      maxLineCharacters: number
+    }
+    answerMatching?: {
+      batchSize: number
+    }
+    concurrency?: number
   }
   pipeline?: LlmPipelineStep[]
 }
 
 export type LoadedLlmFramework = {
   framework: LlmFrameworkConfig
-  prompt: LlmPromptConfig
-  repairPrompt?: LlmPromptConfig
+  /** 按 pipeline step id 索引的 Prompt */
+  prompts: Partial<Record<string, LlmPromptConfig>>
   outputSchema: Record<string, unknown>
 }
 
@@ -70,23 +94,28 @@ export function loadLlmFramework() {
 async function fetchLlmFramework(): Promise<LoadedLlmFramework> {
   const frameworkPath = 'config/llm/framework.json'
   const framework = await fetchJson<LlmFrameworkConfig>(frameworkPath, '框架配置')
-  const convertStep = framework.pipeline?.find((step) => step.id === 'convert')
-  if (!convertStep?.prompt) throw new Error('框架中缺少 convert Prompt')
+  if (!framework.pipeline?.some((step) => step.id === 'convert')) throw new Error('框架中缺少 convert 步骤')
   if (!framework.outputSchema) throw new Error('框架中缺少 outputSchema')
 
-  const promptPath = normalizeConfigPath(convertStep.prompt, 'config/llm')
-  const prompt = await fetchJson<LlmPromptConfig>(promptPath, '转换 Prompt')
-  if (!Array.isArray(prompt.messages) || prompt.messages.length === 0) throw new Error('转换 Prompt 消息为空')
-
-  const repairStep = framework.pipeline?.find((step) => step.id === 'repair')
-  let repairPrompt: LlmPromptConfig | undefined
-  if (repairStep?.prompt) {
-    const repairPath = normalizeConfigPath(repairStep.prompt, 'config/llm')
-    repairPrompt = await fetchJson<LlmPromptConfig>(repairPath, '修复 Prompt')
-    if (!Array.isArray(repairPrompt.messages) || repairPrompt.messages.length === 0) throw new Error('修复 Prompt 消息为空')
+  const prompts: LoadedLlmFramework['prompts'] = {}
+  for (const step of framework.pipeline ?? []) {
+    if (!step.prompt) continue
+    const prompt = await fetchJson<LlmPromptConfig>(normalizeConfigPath(step.prompt, 'config/llm'), `${step.id} Prompt`)
+    if (!Array.isArray(prompt.messages) || prompt.messages.length === 0) throw new Error(`${step.id} Prompt 消息为空`)
+    prompts[step.id] = prompt
   }
 
   const schemaPath = normalizeConfigPath(framework.outputSchema, 'config/llm')
   const outputSchema = await fetchJson<Record<string, unknown>>(schemaPath, '题库 Schema')
-  return { framework, prompt, repairPrompt, outputSchema }
+  return { framework, prompts, outputSchema }
+}
+
+/** 用变量渲染 Prompt 消息；空值使用 variables.optional 中的默认值，仍未提供的替换为空字符串。 */
+export function renderPromptMessages(prompt: LlmPromptConfig, variables: Record<string, string>) {
+  const defaults = prompt.variables?.optional ?? {}
+  const valueOf = (key: string) => variables[key] || defaults[key] || ''
+  return prompt.messages.map((message) => ({
+    role: message.role,
+    content: message.content.replace(/{{\s*([\w]+)\s*}}/g, (_, key: string) => valueOf(key)),
+  }))
 }

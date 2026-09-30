@@ -2,23 +2,47 @@
   "schemaVersion": 1,
   "id": "question-bank-converter",
   "displayName": "题库智能转换",
-  "description": "读取原始文本或导入文档，通过预装 Prompt 转换为刷题助手题库 JSON。",
+  "description": "读取原始文本或导入文档，先由模型分析文档结构，再按区段转换题目、匹配独立答案区，最终输出刷题助手题库 JSON。",
   "userConfigExample": "../examples/llm-user-config.example.json",
   "userConfigSchema": "../schemas/llm-user-config.schema.json",
   "outputSchema": "../schemas/question-bank.schema.json",
   "input": {
-    "acceptedKinds": ["plain-text", "markdown", "docx-extracted-text", "ocr-text"],
+    "acceptedKinds": [
+      "plain-text",
+      "markdown",
+      "docx-extracted-text",
+      "pptx-extracted-text",
+      "ocr-text"
+    ],
+    "analysis": {
+      "maxCharacters": 120000,
+      "maxLineCharacters": 80
+    },
     "chunking": {
       "enabled": true,
-      "maxCharacters": 7000,
-      "overlapCharacters": 300
-    }
+      "maxCharacters": 6000,
+      "outputTokenRatio": 0.6
+    },
+    "answerMatching": {
+      "batchSize": 80
+    },
+    "concurrency": 4
   },
   "pipeline": [
+    {
+      "id": "analyze",
+      "prompt": "prompts/question-bank-analyze.prompt.json",
+      "required": false
+    },
     {
       "id": "convert",
       "prompt": "prompts/question-bank-convert.prompt.json",
       "required": true
+    },
+    {
+      "id": "answer-match",
+      "prompt": "prompts/question-bank-answer-match.prompt.json",
+      "when": "answer-section-detected"
     },
     {
       "id": "repair",

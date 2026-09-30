@@ -2,8 +2,7 @@
   <main class="mobile-shell">
     <MobileTopBar />
 
-    <Transition name="mobile-screen" mode="out-in">
-      <div :key="screen" class="mobile-screen-frame">
+    <!-- 转换器放在 Transition 外保活：切到终端页时不能卸载，否则 onBeforeUnmount 会中止正在进行的转换 -->
     <MobileConverterView
       v-if="converterVisited"
       v-show="screen === 'converter'"
@@ -12,8 +11,10 @@
       @started="openTerminal"
     />
 
+    <Transition name="mobile-screen" mode="out-in">
+      <div v-if="screen !== 'converter'" :key="screen" class="mobile-screen-frame">
     <section v-if="screen === 'terminal'" class="mobile-panel mobile-terminal-view">
-      <button class="mobile-action" type="button" @click="openConverter">鈫?杩斿洖杞崲缁撴灉</button>
+      <button class="mobile-action" type="button" @click="openConverter">← 返回转换结果</button>
       <RuntimeTerminal />
     </section>
     <MobileHomeView
@@ -54,9 +55,9 @@
     />
 
     <section v-else-if="screen === 'review'" class="mobile-panel mobile-mode-list">
-      <h2>鑰冭瘯缁撴潫</h2>
-      <p>绛斿 {{ score }} / {{ totalQuestions }} 棰</p>
-      <button class="mobile-action mobile-primary" type="button" @click="goHome">杩斿洖棣栭〉</button>
+      <h2>考试结束</h2>
+      <p>答对 {{ score }} / {{ totalQuestions }} 题</p>
+      <button class="mobile-action mobile-primary" type="button" @click="goHome">返回首页</button>
     </section>
 
     <MobileSettingsView
@@ -70,9 +71,9 @@
     />
 
     <section v-else-if="screen === 'about'" class="mobile-panel mobile-mode-list">
-      <h2>鍏充簬鍒嵎</h2>
-      <p class="mobile-muted">绉诲姩绔竷灞€姝ｅ湪閫愭杩佺Щ锛岄搴撳拰绛旈鏍稿績涓庢闈㈢鍏变韩銆</p>
-      <button class="mobile-action" type="button" @click="openSettings">杩斿洖璁剧疆</button>
+      <h2>关于别卷</h2>
+      <p class="mobile-muted">移动端布局正在逐步迁移，题库和答题核心与桌面端共享。</p>
+      <button class="mobile-action" type="button" @click="openSettings">返回设置</button>
     </section>
 
     <MobileWrongNotebookView
@@ -110,11 +111,11 @@
 
     <div v-if="screen === 'wrong-notebook' && showImportDialog" class="mobile-dialog-overlay" @click.self="cancelImport">
       <section class="mobile-dialog" role="dialog" aria-modal="true" aria-labelledby="mobile-import-title">
-        <h2 id="mobile-import-title">瀵煎叆閿欓</h2>
-        <p class="mobile-muted">宸茶鍙?{{ pendingImportQuestions?.length || 0 }} 閬撻锛岃閫夋嫨瀵煎叆鏂瑰紡銆</p>
+        <h2 id="mobile-import-title">导入错题</h2>
+        <p class="mobile-muted">已读取 {{ pendingImportQuestions?.length || 0 }} 道题，请选择导入方式。</p>
         <label class="mobile-dialog-option">
           <input v-model="importDialogChoice" type="radio" value="new" />
-          <span>鍒涘缓鏂伴敊棰樻湰</span>
+          <span>创建新错题本</span>
         </label>
         <input
           v-if="importDialogChoice === 'new'"
@@ -125,7 +126,7 @@
         />
         <label class="mobile-dialog-option">
           <input v-model="importDialogChoice" type="radio" value="existing" />
-          <span>瀵煎叆鍒板凡鏈夐敊棰樻湰</span>
+          <span>导入到已有错题本</span>
         </label>
         <select v-if="importDialogChoice === 'existing'" v-model="importDialogTargetNotebook" class="mobile-select">
           <option value="">请选择错题本</option>
@@ -134,8 +135,8 @@
           </option>
         </select>
         <div class="mobile-dialog-actions">
-          <button class="mobile-action" type="button" @click="cancelImport">鍙栨秷</button>
-          <button class="mobile-action mobile-primary" type="button" :disabled="!canConfirmImport" @click="doConfirmImport">纭瀵煎叆</button>
+          <button class="mobile-action" type="button" @click="cancelImport">取消</button>
+          <button class="mobile-action mobile-primary" type="button" :disabled="!canConfirmImport" @click="doConfirmImport">确认导入</button>
         </div>
       </section>
     </div>
@@ -208,7 +209,7 @@ const {
 } = useWrongNotebookActions(questions)
 
 const currentQuestion = computed(() => shuffledQuestions.value[currentQuestionIndex.value])
-const modeLabel = computed(() => ({ practice: '鍋氶缁冧範', exam: '妯℃嫙鑰冭瘯', endorse: '鑳岄妯″紡', wrong: '閿欓缁冧範', specialize: '涓撻」缁冧範' })[appMode.value as 'practice' | 'exam' | 'endorse' | 'wrong' | 'specialize'] || '')
+const modeLabel = computed(() => ({ practice: '做题练习', exam: '模拟考试', endorse: '背题模式', wrong: '错题练习', specialize: '专项练习' })[appMode.value as 'practice' | 'exam' | 'endorse' | 'wrong' | 'specialize'] || '')
 const currentBankNotebooks = computed(() => quizStore.getNotebooksByBank(currentBankFile.value))
 const activeNotebookForBank = computed(() => quizStore.getActiveNotebook(currentBankFile.value)?.id)
 const currentBankName = computed(() => allBanks.value.find((bank) => bank.file === currentBankFile.value)?.name || currentBankFile.value)
@@ -261,16 +262,16 @@ function startNotebookPractice(notebookId: string) {
 
 function setActiveNotebook(notebookId: string) {
   quizStore.setActiveNotebook(currentBankFile.value, notebookId)
-  void showToast('宸插垏鎹㈠綋鍓嶉敊棰樻湰')
+  void showToast('已切换当前错题本')
 }
 
 function renameNotebook(notebookId: string) {
   const notebook = quizStore.notebooks.find((item) => item.id === notebookId)
   if (!notebook) return
-  const nextName = window.prompt('璇疯緭鍏ユ柊鐨勯敊棰樻湰鍚嶇О', notebook.name)?.trim()
+  const nextName = window.prompt('请输入新的错题本名称', notebook.name)?.trim()
   if (!nextName || nextName === notebook.name) return
   quizStore.renameNotebook(notebookId, nextName)
-  void showToast('閿欓鏈悕绉板凡鏇存柊')
+  void showToast('错题本名称已更新')
 }
 
 function doConfirmImport() {

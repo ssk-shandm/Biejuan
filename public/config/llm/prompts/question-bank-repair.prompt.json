@@ -1,33 +1,35 @@
 {
   "schemaVersion": 1,
   "id": "question-bank-repair",
-  "version": "1.1.0",
-  "name": "题库 JSON 校验修复",
-  "description": "只修复模型输出的 JSON 语法和 Schema 错误，不重新生成题目。",
+  "version": "2.0.0",
+  "name": "题目 JSON 校验修复",
+  "description": "只修复未通过 Schema 校验的题目，不重新生成题目、不改变事实内容。",
   "variables": {
     "required": [
       "invalidOutput",
       "validationErrors"
     ],
     "optional": {
-      "sourceText": "",
-      "imageManifestJson": "[]"
+      "sourceText": ""
     }
   },
   "messages": [
     {
       "role": "system",
-      "content": "你是 JSON 修复器。只修复输入中的 JSON 语法、字段类型和题库 Schema 错误，不新增、删除或改写题目的事实内容，不猜测缺失答案。必须保留题目中已有的 Markdown 代码块和合法图片路径，不要把代码块外层 JSON 围栏混入字符串。最终只输出修复后的 JSON 数组，不要输出 Markdown 代码围栏或解释。 Image filenames are opaque numeric identifiers; do not infer image meaning from filenames or rewrite valid image paths."
+      "content": "你是题库 JSON 修复器。你只根据校验错误对题目做最小修改：修正 JSON 语法、字段类型、题型与字段不匹配等问题，不新增、删除或改写题目的事实内容，不猜测缺失的答案。必须保留原有的 Markdown 代码块、图片 id、startLine 和 endLine。只输出一个 JSON 对象，不要输出 Markdown 代码围栏或解释。"
     },
     {
       "role": "user",
-      "content": "下面的题库输出未通过校验。请按照校验错误进行最小修改。\n\n校验错误：\n{{validationErrors}}\n\n允许使用的图片清单：\n{{imageManifestJson}}\n\n无效输出：\n<invalid_output>\n{{invalidOutput}}\n</invalid_output>\n\n原始资料仅供核对，不得据此扩写：\n<source_document>\n{{sourceText}}\n</source_document>"
+      "content": "下面的题目未通过校验，请修复后按 {\"questions\": [...]} 格式输出，题目数量和顺序保持不变。\n\n字段约定：type 只能是 single、multiple、true-false、fill、short-answer、program-analysis、code、compound；single/multiple 必须有至少两个大写字母键的 options，没有选项时改为 fill 或 short-answer；single 的 answer 是一个大写字母，multiple 是大写字母数组，true-false 是 true 或 false，其他题型是字符串，未知答案用空字符串；compound 必须有 subQuestions（每项含整数 id、type、content、answer），小问 type 不能是 true-false 或 compound；content 不能为空，空题干时用原文补齐，原文也没有时把该题 content 写成 \"(题干缺失)\"。\n\n校验错误：\n{{validationErrors}}\n\n待修复内容：\n<invalid_output>\n{{invalidOutput}}\n</invalid_output>\n\n原文仅供核对，不得据此扩写：\n<source_document>\n{{sourceText}}\n</source_document>"
     }
   ],
   "response": {
-    "format": "json-schema",
+    "format": "json-object",
     "schema": "../../schemas/question-bank.schema.json",
-    "root": "array",
-    "stripMarkdownCodeFence": true
+    "root": "object",
+    "jsonObject": true
+  },
+  "request": {
+    "thinking": false
   }
 }

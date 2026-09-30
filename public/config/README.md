@@ -37,13 +37,14 @@ public/config/
 
 `llm/framework.json` 定义与供应商无关的处理流程：
 
-1. 批量读取 DOCX、PDF、XLSX/XLSM、TXT、Markdown、JSON 或 CSV；
-2. PDF 文本层不足时使用 Tesseract OCR；
-3. 按配置分段并填充 `question-bank-convert.prompt.json`；
-4. 调用 OpenAI-compatible `/chat/completions` 并显示流式输出；
-5. 使用 `schemas/question-bank.schema.json` 严格校验每个分段和最终合并结果；
-6. 校验失败时使用 `question-bank-repair.prompt.json` 自动修复，次数由 framework 配置决定；
-7. 校验通过后提供复制和下载题库 JSON。
+1. 本地提取 DOCX（还原 Word 自动编号、表格、图片锚点）、PPTX（按幻灯片顺序）、PDF（按行还原，文本层不足时 OCR）、XLSX/XLSM、TXT、Markdown、JSON 或 CSV；
+2. 文本按行编号。`analyze` 步骤只发送每行截断后的轮廓（`input.analysis`），由模型划分题目区、答案区和无关区，并命名题库；
+3. `convert` 步骤只发送题目区，按 `input.chunking` 分段并发（`input.concurrency`）转换。模型为每道题标注起止行号，本地据此合并去重、关联图片；
+4. 文档有独立答案区时，`answer-match` 步骤只发送答案区原文和题目摘要（题号、题干开头），把答案回填到题目和综合题小问；
+5. 每道题用 `schemas/question-bank.schema.json` 校验，不通过的交给 `question-bank-repair.prompt.json` 修复，次数由 `maxAttempts` 决定；
+6. 输出被 `maxOutputTokens` 截断时自动把分段一分为二重试。
+
+Prompt 的 `request.thinking: false` 会请求关闭模型推理（DeepSeek 的 `thinking` 参数），抽取任务更快，也避免推理 token 挤占输出上限；服务商不支持时自动去掉该参数。文档结构的判断全部交给模型，本地不再有针对特定排版的正则解析。
 
 扫描 PDF 首次 OCR 通常需要下载语言数据。默认语言是 `chi_sim+eng`，当前没有预装离线 traineddata。Excel 当前只读取普通单元格文本，不处理复杂合并单元格和公式计算。
 
