@@ -70,7 +70,7 @@
                   <span class="section-label">本地内容</span>
                   <h3>题库资源</h3>
                   <p class="card-description">
-                    下方显示应用当前可用的题库。本机转换题库存储在应用数据中，可在这里删除；public 文件夹仅包含随项目提供的只读资源。
+                    下方显示应用当前可用的题库。桌面端可将 UTF-8 JSON 文件放入题库目录，再点击刷新题库；合法文件会自动加入列表，无效文件会提示原因。本机转换题库存储在应用数据中，可在这里删除。
                   </p>
                 </div>
               </div>
@@ -101,6 +101,14 @@
                     <small>打开 public/images</small>
                   </span>
                   <span class="resource-arrow" aria-hidden="true">›</span>
+                </button>
+                <button class="resource-btn" type="button" :disabled="isRefreshingBanks" :aria-busy="isRefreshingBanks" @click="emit('refreshBanks')">
+                  <span class="resource-icon" aria-hidden="true">↻</span>
+                  <span class="resource-copy">
+                    <strong>{{ isRefreshingBanks ? '正在校验…' : '刷新题库' }}</strong>
+                    <small>重新扫描并校验 JSON</small>
+                  </span>
+                  <span class="resource-arrow" aria-hidden="true">→</span>
                 </button>
               </div>
 
@@ -298,9 +306,10 @@ import {
 import { openExternalUrl } from '../utils/openExternal'
 import { openContentLocation, type ContentLocation } from '../utils/openContentLocation'
 
-const props = defineProps<{ banks: BankEntry[]; selectedBank: string }>()
+const props = defineProps<{ banks: BankEntry[]; selectedBank: string; isRefreshingBanks?: boolean }>()
 const emit = defineEmits<{
   back: []
+  refreshBanks: []
 }>()
 
 const settingsSections = [

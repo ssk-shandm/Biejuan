@@ -4,9 +4,13 @@
 
     <div class="bank-selector">
       <label for="bank-select">选择题库：</label>
-      <select id="bank-select" :value="selectedBank" class="bank-select-input" @change="onBankChange">
+      <select id="bank-select" :value="selectedBank" :disabled="isRefreshingBanks || banks.length === 0" class="bank-select-input" @change="onBankChange">
+        <option v-if="banks.length === 0" value="">暂无可用题库</option>
         <option v-for="bank in banks" :key="bank.file" :value="bank.file">{{ bank.name }}</option>
       </select>
+      <button class="mode-btn refresh-bank-btn" type="button" :disabled="isRefreshingBanks" :aria-busy="isRefreshingBanks" @click="emit('refreshBanks')">
+        {{ isRefreshingBanks ? '正在校验…' : '刷新题库' }}
+      </button>
     </div>
 
     <slot />
@@ -45,12 +49,14 @@ const props = defineProps<{
   banks: { name: string; file: string }[]
   selectedBank: string
   questionTypes?: string[]
+  isRefreshingBanks?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'start', mode: Exclude<AppMode, 'start' | 'review' | 'about'>): void
   (e: 'start-specialize', types: string[]): void
   (e: 'changeBank', fileName: string): void
+  (e: 'refreshBanks'): void
 }>()
 
 const showSpecializePanel = ref(false)
@@ -80,13 +86,14 @@ function confirmSpecialize() {
 <style scoped>
 .start-screen { text-align: center; color: var(--color-text-primary); }
 .start-screen h2 { margin-top: 0; }
-.bank-selector { margin-bottom: 20px; display: flex; align-items: center; justify-content: center; gap: 10px; }
+.bank-selector { margin-bottom: 20px; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; }
 .bank-selector label { font-weight: 600; color: var(--color-text-secondary); }
 .bank-select-input { padding: 8px 12px; font-size: 1rem; border-radius: 6px; border: 1px solid var(--color-border-input); background: var(--color-bg-input); color: var(--color-text-input); }
 .mode-buttons { position: relative; display: flex; flex-direction: column; gap: 15px; width: 100%; max-width: 300px; margin: 20px auto 0; }
 .mode-btn { padding: 14px; font-size: 1.1rem; border: 1px solid var(--color-border-btn-mode); border-radius: 8px; background: var(--color-bg-btn-mode); color: var(--color-text-btn-mode); cursor: pointer; transition: all .2s; font-weight: 600; }
 .mode-btn:hover { background: var(--color-bg-btn-mode-hover); transform: translateY(-2px); box-shadow: 0 4px 6px rgba(0,0,0,.1); }
 .mode-btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+.refresh-bank-btn { padding: 8px 12px; font-size: .95rem; }
 .wrong-mode-btn { background: var(--color-bg-btn-wrong-mode); color: var(--color-text-btn-wrong-mode); border-color: var(--color-border-btn-wrong-mode); }
 .wrong-mode-btn:hover { background: var(--color-bg-btn-wrong-mode-hover); }
 .settings-mode-btn { border-style: dashed; }

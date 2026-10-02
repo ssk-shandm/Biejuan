@@ -154,7 +154,16 @@ fn open_directory(path: &Path) -> std::io::Result<()> {
 /// Development builds point at the repository's `public` directory. Packaged
 /// builds point at the `public` directory copied beside the installed app resources.
 #[tauri::command]
-fn open_content_location(_app: tauri::AppHandle, location: &str) -> Result<String, String> {
+fn open_content_location(app: tauri::AppHandle, location: &str) -> Result<String, String> {
+    let target = content_directory(&app, location)?;
+    if !target.is_dir() {
+        return Err(format!("资源目录不存在：{}", target.display()));
+    }
+    open_directory(&target).map_err(|error| format!("无法打开资源目录：{error}"))?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
+fn content_directory(_app: &tauri::AppHandle, location: &str) -> Result<PathBuf, String> {
     let directory_name = match location {
         "subjects" => "subjects",
         "images" => "images",
@@ -175,12 +184,88 @@ fn open_content_location(_app: tauri::AppHandle, location: &str) -> Result<Strin
         .join("public")
         .join(directory_name);
 
-    if !target.is_dir() {
-        return Err(format!("资源目录不存在：{}", target.display()));
+    Ok(target)
+}
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct QuestionBankEntry {
+    name: String,
+    file: String,
+}
+
+#[tauri::command]
+fn list_question_banks(app: tauri::AppHandle) -> Result<Vec<QuestionBankEntry>, String> {
+    let target = content_directory(&app, "subjects")?;
+    if !target.exists() {
+        return Ok(Vec::new());
     }
 
-    open_directory(&target).map_err(|error| format!("无法打开资源目录：{error}"))?;
-    Ok(target.to_string_lossy().into_owned())
+    let entries = fs::read_dir(&target)
+        .map_err(|error| format!("无法读取题库目录 {}: {error}", target.display()))?;
+    let mut banks = Vec::new();
+
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("无法读取题库文件: {error}"))?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if !extension.eq_ignore_ascii_case("json") {
+            continue;
+        }
+
+        let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if file_name.eq_ignore_ascii_case("banks.json") {
+            continue;
+        }
+
+        let name = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or(file_name)
+            .to_owned();
+        banks.push(QuestionBankEntry {
+            name,
+            file: format!("/subjects/{file_name}"),
+        });
+    }
+
+    banks.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(banks)
+}
+
+#[tauri::command]
+fn read_question_bank(app: tauri::AppHandle, file: &str) -> Result<String, String> {
+    let file_name = file.strip_prefix("/subjects/").ok_or("不支持的题库路径")?;
+    if file_name.is_empty()
+        || file_name.contains(['/', '\\', ':'])
+        || file_name.eq_ignore_ascii_case("banks.json")
+        || !Path::new(file_name)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+    {
+        return Err("不支持的题库文件名".to_string());
+    }
+    let directory = content_directory(&app, "subjects")?
+        .canonicalize()
+        .map_err(|error| format!("无法读取题库目录：{error}"))?;
+    let target = directory
+        .join(file_name)
+        .canonicalize()
+        .map_err(|error| format!("无法找到题库文件：{error}"))?;
+    if target.parent() != Some(directory.as_path()) || !target.is_file() {
+        return Err("题库文件必须位于 public/subjects 目录内".to_string());
+    }
+    fs::read_to_string(target)
+        .map(|text| text.trim_start_matches('\u{feff}').to_owned())
+        .map_err(|error| format!("无法读取题库，请使用 UTF-8 编码保存：{error}"))
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -416,6 +501,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_app_version,
             open_content_location,
+            list_question_banks,
+            read_question_bank,
             read_llm_config,
             write_llm_config,
             open_llm_config_file,

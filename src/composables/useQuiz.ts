@@ -6,6 +6,7 @@ import { useQuizStore } from '../stores/quizStore'
 import { showToast, showConfirm } from './useToast'
 import { isJsonFile, readImportedText } from '../services/fileService'
 import { GENERATED_BANK_PREFIX, GENERATED_BANKS_CHANGED, listGeneratedBanks, readGeneratedBank, saveGeneratedBank } from '../services/generatedBankStorage'
+import { listPublicBanks, readPublicBank } from '../services/publicBankStorage'
 
 export interface BankEntry {
   name: string
@@ -50,6 +51,8 @@ export function useQuiz() {
 
   // ── 核心状态 ──
   const isLoading = ref(true)
+  const isRefreshingBanks = ref(false)
+  let refreshPromise: Promise<void> | null = null
   const questions = shallowRef<Question[]>([])
   const shuffledQuestions = shallowRef<Question[]>([])
   const currentQuestionIndex = ref(0)
@@ -89,29 +92,82 @@ export function useQuiz() {
 
   // ── 题库清单加载 ──
   async function loadBanks() {
+    const warnings: string[] = []
+    let discoveredBanks: BankEntry[] | null = null
     try {
-      const resp = await fetch(`/subjects/banks.json?t=${Date.now()}`)
-      if (resp.ok) {
-        banks.value = (await resp.json()) as BankEntry[]
+      discoveredBanks = await listPublicBanks()
+    } catch (error) {
+      warnings.push(`无法扫描题库目录：${error instanceof Error ? error.message : String(error)}`)
+    }
+    const validBanks: BankEntry[] = []
+    const invalidBanks: string[] = []
+    const freshCache = new Map<string, Question[]>()
+    for (const bank of discoveredBanks ?? []) {
+      try {
+        freshCache.set(bank.file, await readPublicBank(bank.file, bank.name))
+        validBanks.push(bank)
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error)
+        invalidBanks.push(`${bank.file.split('/').pop()}：${reason}`)
       }
-    } catch (e) {
-      console.error('加载题库清单失败:', e)
+    }
+    if (discoveredBanks !== null) {
+      for (const file of importedCache.keys()) {
+        if (!file.startsWith(GENERATED_BANK_PREFIX)) importedCache.delete(file)
+      }
+      for (const [file, questions] of freshCache) importedCache.set(file, questions)
+      banks.value = validBanks
     }
     try {
       generatedBanks.value = await listGeneratedBanks()
     } catch (e) {
       console.error('load generated banks failed:', e)
-      showToast('加载本地题库失败，请重启应用后重试。')
+      warnings.push('加载应用内题库失败，请重启应用后重试。')
     }
-    // 根据上次选择或默认选中第一个
-    if (allBanks.value.length > 0) {
-      const last = localStorage.getItem(LAST_BANK_KEY)
-      if (last && allBanks.value.some((b) => b.file === last)) {
-        currentBankFile.value = last
-      } else {
-        currentBankFile.value = allBanks.value[0]!.file
+    const preferred = currentBankFile.value || localStorage.getItem(LAST_BANK_KEY)
+    currentBankFile.value = allBanks.value.find((bank) => bank.file === preferred)?.file
+      ?? allBanks.value[0]?.file ?? ''
+    if (currentBankFile.value) localStorage.setItem(LAST_BANK_KEY, currentBankFile.value)
+    else localStorage.removeItem(LAST_BANK_KEY)
+    if (invalidBanks.length > 0) {
+      const details = invalidBanks.slice(0, 4).join('\n')
+      const suffix = invalidBanks.length > 4 ? `\n另有 ${invalidBanks.length - 4} 个文件未显示。` : ''
+      warnings.push(`发现 ${invalidBanks.length} 个无效题库，已跳过：\n${details}${suffix}`)
+    }
+    return warnings
+  }
+
+  function refreshBanks(): Promise<void> {
+    if (refreshPromise) return refreshPromise
+    refreshPromise = performBankRefresh().finally(() => { refreshPromise = null })
+    return refreshPromise
+  }
+
+  async function performBankRefresh() {
+    isRefreshingBanks.value = true
+    const previousBankFile = currentBankFile.value
+    let warnings: string[] = []
+    try {
+      warnings = await loadBanks()
+      if (currentBankFile.value) await loadQuestions(currentBankFile.value, false)
+      else {
+        questions.value = []
+        availableQuestionTypes.value = []
       }
+      if (!currentBankFile.value || previousBankFile !== currentBankFile.value) {
+        shuffledQuestions.value = []
+        answerSheet.value.clear()
+        currentQuestionIndex.value = 0
+      }
+    } catch (error) {
+      console.error('刷新题库失败:', error)
+      warnings.push(`刷新题库失败：${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      isRefreshingBanks.value = false
+      isLoading.value = false
     }
+    await nextTick()
+    if (warnings.length > 0) void showToast(warnings.join('\n\n'))
   }
 
   // ── 题库加载 ──
@@ -125,16 +181,15 @@ export function useQuiz() {
       } else if (fileName.startsWith(GENERATED_BANK_PREFIX)) {
         questions.value = normalizeQuestionBank(await readGeneratedBank(fileName), fileName)
       } else {
-        const resp = await fetch(`${fileName}?t=${Date.now()}`)
-        if (!resp.ok) throw new Error('网络错误或文件不存在')
-        const raw: unknown = await resp.json()
-        questions.value = normalizeQuestionBank(raw, fileName)
+        questions.value = await readPublicBank(fileName)
       }
       const types = new Set(questions.value.map((q) => q.type))
       availableQuestionTypes.value = [...types].sort()
       currentBankFile.value = fileName
       importedCache.set(fileName, questions.value)
     } catch (e) {
+      questions.value = []
+      availableQuestionTypes.value = []
       console.error('加载题目失败:', e)
       showToast(`加载题库失败 (${fileName})，请检查文件是否存在。`)
     } finally {
@@ -144,6 +199,7 @@ export function useQuiz() {
 
   // ── 模式切换 ──
   function handleBankChange(newFileName: string) {
+    if (isRefreshingBanks.value) return
     if (newFileName === currentBankFile.value) return
     answerSheet.value.clear()
     currentQuestionIndex.value = 0
@@ -177,7 +233,7 @@ export function useQuiz() {
     }
 
     // 防御：题库未加载时阻止进入
-    if (questions.value.length === 0) {
+    if (isRefreshingBanks.value || questions.value.length === 0) {
       showToast('题库尚未加载完成，请稍后再试。')
       return
     }
@@ -958,9 +1014,7 @@ export function useQuiz() {
 
   onMounted(async () => {
     window.addEventListener(GENERATED_BANKS_CHANGED, handleGeneratedBankChange)
-    await loadBanks()
-    if (currentBankFile.value) await loadQuestions()
-    else isLoading.value = false
+    await refreshBanks()
     window.addEventListener('popstate', handlePopState)
   })
 
@@ -974,13 +1028,13 @@ export function useQuiz() {
   // ── 返回 ──
   return {
     // state
-    isLoading, questions, shuffledQuestions, currentQuestionIndex, score, appMode, answerSheet,
+    isLoading, isRefreshingBanks, questions, shuffledQuestions, currentQuestionIndex, score, appMode, answerSheet,
     currentBankFile, availableQuestionTypes, specializeTypes,
     shuffleEnabled, shufflePrefKey, wrongDisplayEntryIds, renderError, banks,
     // computed
     totalQuestions, wrongCount, allBanks,
     // actions
-    loadQuestions, handleBankChange, handleBackToHome, handleStartGame, handleStartSpecialize,
+    loadQuestions, refreshBanks, handleBankChange, handleBackToHome, handleStartGame, handleStartSpecialize,
     handleAnswerUpdate, handleSubmit, handleCompoundSubmit, handleSubSubmit, submitExam,
     handleToggleShuffle, handleClearPractice, handleAddToWrongBook, handleClearWrong,
     handleClearWrongAnswers,

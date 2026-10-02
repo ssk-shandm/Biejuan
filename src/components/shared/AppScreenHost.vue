@@ -5,13 +5,15 @@
     :banks="allBanks"
     :selected-bank="currentBankFile"
     :question-types="availableQuestionTypes"
+    :is-refreshing-banks="isRefreshingBanks"
     class="quiz-container-start"
     @start="(mode) => emit('start', mode)"
     @start-specialize="emit('startSpecialize', $event)"
     @changeBank="emit('changeBank', $event)"
+    @refresh-banks="emit('refreshBanks')"
   />
 
-  <SettingsPage v-else-if="appMode === 'settings'" key="settings" :banks="allBanks" :selected-bank="currentBankFile" @back="emit('backHome')" />
+  <SettingsPage v-else-if="appMode === 'settings'" key="settings" :banks="allBanks" :selected-bank="currentBankFile" :is-refreshing-banks="isRefreshingBanks" @back="emit('backHome')" @refresh-banks="emit('refreshBanks')" />
 
   <AboutPage v-else-if="appMode === 'about'" key="about" @back="emit('backSettings')" />
 
@@ -88,6 +90,7 @@ import QuizSessionView from './QuizSessionView.vue'
 defineProps<{
   appMode: AppMode
   allBanks: BankEntry[]
+  isRefreshingBanks: boolean
   currentBankFile: string
   availableQuestionTypes: string[]
   currentBankNotebooks: WrongNotebook[]
@@ -115,6 +118,7 @@ const emit = defineEmits<{
   (event: 'changeBank', fileName: string): void
   (event: 'backHome'): void
   (event: 'backSettings'): void
+  (event: 'refreshBanks'): void
   (event: 'importWrong'): void
   (event: 'exportWrong'): void
   (event: 'setActiveNotebook', id: string): void

@@ -5,6 +5,7 @@
       v-else
       :app-mode="appMode"
       :all-banks="allBanks"
+      :is-refreshing-banks="isRefreshingBanks"
       :current-bank-file="currentBankFile"
       :available-question-types="availableQuestionTypes"
       :current-bank-notebooks="currentBankNotebooks"
@@ -27,6 +28,7 @@
       @change-bank="handleBankChange"
       @back-home="handleBackToHome"
       @back-settings="handleBackToSettings"
+      @refresh-banks="refreshBanks"
       @import-wrong="importWrongQuestions"
       @export-wrong="exportWrongQuestions"
       @set-active-notebook="(id: string) => quizStore.setActiveNotebook(currentBankFile, id)"
@@ -111,7 +113,7 @@ const {
   handleAnswerUpdate, handleSubmit, handleCompoundSubmit, handleSubSubmit,
   handleToggleShuffle, handleClearPractice, handleAddToWrongBook, handleClearWrong,
   handleJumpTo, submitExam, exportWrongQuestions, importWrongQuestions, handleFileImport,
-  allBanks,
+  allBanks, refreshBanks, isRefreshingBanks,
   showImportDialog, importDialogNewNotebookName, pendingImportQuestions,
   confirmImportToNew, confirmImportToExisting, cancelImport,
   handleClearWrongAnswers,

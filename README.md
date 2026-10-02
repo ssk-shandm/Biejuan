@@ -43,7 +43,7 @@ npm run dev
 npm run tauri:dev
 ```
 
-> 开发模式可以读取 `public/subjects/` 中的本地题库；生产构建不会打包仓库中的私人题库和题目图片。发布后请在应用内导入自己的题库。
+> 生产构建不会打包仓库中的私人题库和题目图片。发布后可以在应用内导入题库，也可以在桌面端将 JSON 放入实际的题库资源目录。
 
 ## 题库
 
@@ -64,7 +64,15 @@ npm run tauri:dev
 ]
 ```
 
-新题库建议使用 `single`、`multiple`、`true-false`、`fill`、`short-answer`、`program-analysis`、`code`、`compound` 等稳定题型标识。开发时可将题库放在 `public/subjects/`；需要重新生成清单时执行 `npm run prebuild`。
+新题库建议使用 `single`、`multiple`、`true-false`、`fill`、`short-answer`、`program-analysis`、`code`、`compound` 等稳定题型标识。
+
+桌面端支持直接读取目录中的题库，无须手动编辑 `banks.json`：
+
+1. 在“设置 → 题库资源 → 题库文件”打开实际的 `public/subjects/` 目录（开发版是仓库目录，安装版是应用资源目录）。
+2. 将 UTF-8 编码的题库 JSON 放入该目录，文件名即列表中的题库名称；`banks.json` 是保留清单，不作为题库加载。
+3. 在主页或设置页点击“刷新题库”，也可以重启应用。合法题库自动加入列表；空题库、JSON 语法错误或不符合兼容题库格式的文件会被跳过，刷新完成后弹出文件名和原因。修改或删除文件后再次刷新也会同步更新列表和内容。
+
+网页端仍使用构建清单，新增本地题库后需运行 `npm run predev` 或 `npm run prebuild` 重新生成清单；Android 继续通过应用内导入题库。
 
 详细格式参见 [题库规范](public/config/question-schema.md)和[完整示例](public/config/examples/question-bank.example.json)。题目图片可以随题库放在 `public/images/` 下。
 
