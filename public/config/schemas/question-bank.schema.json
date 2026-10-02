@@ -7,7 +7,7 @@
   "$defs": {
     "format": {
       "type": "string",
-      "enum": ["text", "markdown"]
+      "enum": ["text", "txt", "markdown", "mermaid", "plantuml"]
     },
     "options": {
       "type": "object",

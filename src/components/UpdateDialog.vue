@@ -10,6 +10,9 @@
           format="markdown"
         />
         <p v-else class="release-notes-empty">该版本没有提供更新说明。</p>
+        <p v-if="isDownloading && downloadProgress" class="download-progress" aria-live="polite">
+          {{ downloadProgress }}
+        </p>
         <p v-if="downloadError" class="download-error">{{ downloadError }}</p>
         <div class="dialog-actions">
           <button
@@ -19,7 +22,7 @@
             :title="updateInfo.installerUrl ? '下载并安装 Windows 更新' : '当前 Release 没有 Windows 安装包'"
             @click="downloadAndInstallUpdate"
           >
-            {{ isDownloading ? '下载中…' : '立即下载' }}
+            {{ isDownloading ? '下载中…' : '下载并安装' }}
           </button>
           <button class="secondary-btn" type="button" @click="openGitHubDownload">前往 GitHub 下载</button>
           <button class="secondary-btn" type="button" @click="clearUpdate">稍后再说</button>
@@ -38,6 +41,7 @@ import { openExternalUrl } from '../utils/openExternal'
 const {
   updateInfo,
   isDownloading,
+  downloadProgress,
   updateError,
   downloadAndInstall,
   clearUpdate,
@@ -103,6 +107,12 @@ async function downloadAndInstallUpdate() {
 
 .release-notes-empty {
   color: var(--color-text-muted);
+}
+
+.download-progress {
+  margin: 14px 0 0;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .download-error {

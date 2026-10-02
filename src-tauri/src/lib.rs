@@ -218,13 +218,13 @@ fn safe_update_file_name(file_name: &str) -> Result<String, String> {
     if name.is_empty()
         || name == "."
         || name == ".."
-        || !name.to_ascii_lowercase().ends_with(".exe")
+        || !name.to_ascii_lowercase().ends_with("-setup.exe")
     {
         return Err("Invalid update installer file name".to_string());
     }
     if !name
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b' '))
+        .chars()
+        .all(|character| !character.is_control() && !r#"<>:"/\|?*"#.contains(character))
     {
         return Err("Update installer file name contains unsafe characters".to_string());
     }
@@ -247,13 +247,24 @@ async fn download_and_install_update(
     {
         validate_update_url(&url)?;
         let safe_name = safe_update_file_name(&file_name)?;
-        let temp_dir = app
+        let executable =
+            std::env::current_exe().map_err(|error| format!("无法获取当前程序路径：{error}"))?;
+        let install_directory = executable
+            .parent()
+            .ok_or_else(|| "无法获取当前安装目录".to_string())?;
+        if !install_directory.join("uninstall.exe").is_file() {
+            return Err("当前运行的是便携版或开发版，自动安装不会替换此文件。请使用 Release 中的 *-setup.exe 安装版，并从安装后生成的快捷方式启动。".to_string());
+        }
+        // 优先保存到用户「下载」目录，方便安装失败时手动找到安装包
+        let save_dir = app
             .path()
-            .temp_dir()
-            .map_err(|error| format!("Unable to get temporary directory: {error}"))?;
-        fs::create_dir_all(&temp_dir)
-            .map_err(|error| format!("Unable to create temporary directory: {error}"))?;
-        let target = temp_dir.join(&safe_name);
+            .download_dir()
+            .or_else(|_| app.path().temp_dir())
+            .map_err(|error| format!("无法获取下载目录：{error}"))?;
+        fs::create_dir_all(&save_dir).map_err(|error| format!("无法创建下载目录：{error}"))?;
+        let target = save_dir.join(&safe_name);
+        // 先写入 .part 临时文件，下载完成后再重命名，避免残留半截安装包
+        let partial = save_dir.join(format!("{safe_name}.part"));
 
         let response = reqwest::Client::new()
             .get(&url)
@@ -271,37 +282,10 @@ async fn download_and_install_update(
 
         let total = response.content_length();
         let mut downloaded = 0_u64;
-        let mut output = fs::File::create(&target)
-            .map_err(|error| format!("Unable to create update file: {error}"))?;
-        app.emit(
-            "update-download-progress",
-            UpdateDownloadProgress {
-                downloaded,
-                total,
-                percent: total.map(|size| if size == 0 { 0 } else { 0 }),
-                file_name: safe_name.clone(),
-            },
-        )
-        .map_err(|error| format!("Unable to report download progress: {error}"))?;
-
-        let mut response = response;
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|error| format!("Unable to read update data: {error}"))?
-        {
-            output
-                .write_all(&chunk)
-                .map_err(|error| format!("Unable to save update file: {error}"))?;
-            downloaded += chunk.len() as u64;
-            let percent = total.map(|size| {
-                if size == 0 {
-                    100
-                } else {
-                    ((downloaded.saturating_mul(100) / size).min(100)) as u8
-                }
-            });
-            app.emit(
+        let mut output =
+            fs::File::create(&partial).map_err(|error| format!("无法创建更新文件：{error}"))?;
+        let emit_progress = |downloaded: u64, percent: Option<u8>| {
+            let _ = app.emit(
                 "update-download-progress",
                 UpdateDownloadProgress {
                     downloaded,
@@ -309,20 +293,117 @@ async fn download_and_install_update(
                     percent,
                     file_name: safe_name.clone(),
                 },
-            )
-            .map_err(|error| format!("Unable to report download progress: {error}"))?;
+            );
+        };
+        emit_progress(0, total.map(|_| 0));
+
+        // 只在百分比变化（或未知总大小时每 1 MB）时上报，避免每个网络分片都推送一次事件
+        let mut last_percent: Option<u8> = Some(0);
+        let mut last_reported_bytes = 0_u64;
+        let mut response = response;
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| format!("读取更新数据失败：{error}"))?
+        {
+            output
+                .write_all(&chunk)
+                .map_err(|error| format!("保存更新文件失败：{error}"))?;
+            downloaded += chunk.len() as u64;
+            match total {
+                Some(size) => {
+                    let percent = if size == 0 {
+                        100
+                    } else {
+                        (downloaded.saturating_mul(100) / size).min(100) as u8
+                    };
+                    if last_percent != Some(percent) {
+                        last_percent = Some(percent);
+                        emit_progress(downloaded, Some(percent));
+                    }
+                }
+                None => {
+                    if downloaded - last_reported_bytes >= 1024 * 1024 {
+                        last_reported_bytes = downloaded;
+                        emit_progress(downloaded, None);
+                    }
+                }
+            }
         }
         output
             .flush()
-            .map_err(|error| format!("Unable to finish writing update file: {error}"))?;
+            .map_err(|error| format!("写入更新文件失败：{error}"))?;
         drop(output);
+        if downloaded == 0 || total.is_some_and(|size| size != downloaded) {
+            return Err("更新安装包下载不完整，请重试".to_string());
+        }
+        if total.is_none() {
+            emit_progress(downloaded, None);
+        }
 
-        Command::new(&target)
-            .arg("/S")
-            .spawn()
-            .map_err(|error| format!("Unable to start update installer: {error}"))?;
+        if target.exists() {
+            let _ = fs::remove_file(&target);
+        }
+        fs::rename(&partial, &target).map_err(|error| format!("无法保存更新安装包：{error}"))?;
+
+        let _ = app.emit(
+            "update-install-starting",
+            target.to_string_lossy().into_owned(),
+        );
+        launch_installer(&target, install_directory).map_err(|error| {
+            format!(
+                "{error}。安装包已保存到：{}，可手动运行安装",
+                target.display()
+            )
+        })?;
         app.exit(0);
         Ok(())
+    }
+}
+
+/// 通过 ShellExecuteW 启动安装包。
+///
+/// 安装包是 perMachine 模式，清单要求管理员权限；`Command::spawn`（CreateProcess）
+/// 遇到需要提权的程序会直接失败（ERROR_ELEVATION_REQUIRED），而 ShellExecute
+/// 会正常弹出 UAC 确认。`/P` 为被动模式（只显示进度、无需点击），`/R` 让安装完成后自动重启应用。
+#[cfg(target_os = "windows")]
+fn launch_installer(path: &Path, install_directory: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    fn wide(value: &std::ffi::OsStr) -> Vec<u16> {
+        value.encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    let operation = wide("open".as_ref());
+    let file = wide(path.as_os_str());
+    let mut arguments = std::ffi::OsString::from("/UPDATE /P /R /D=");
+    arguments.push(install_directory);
+    let parameters = wide(&arguments);
+    let directory = path.parent().map(|dir| wide(dir.as_os_str()));
+
+    // SAFETY: 所有字符串都是以 0 结尾的 UTF-16 缓冲区，在调用期间保持存活
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            operation.as_ptr(),
+            file.as_ptr(),
+            parameters.as_ptr(),
+            directory
+                .as_ref()
+                .map_or(std::ptr::null(), |dir| dir.as_ptr()),
+            SW_SHOWNORMAL,
+        )
+    };
+    // ShellExecuteW 返回值大于 32 表示成功
+    let code = result as isize;
+    if code > 32 {
+        Ok(())
+    } else if code == 5 {
+        Err("已取消管理员授权，更新未安装".to_string())
+    } else {
+        Err(format!("无法启动更新安装程序（错误码 {code}）"))
     }
 }
 

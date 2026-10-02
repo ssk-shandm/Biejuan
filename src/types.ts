@@ -1,4 +1,4 @@
-export type ContentFormat = 'text' | 'markdown'
+export type ContentFormat = 'text' | 'txt' | 'markdown' | 'mermaid' | 'plantuml'
 
 /** 推荐在题库 JSON 中使用的稳定题型标识。旧中文题型仍由加载器兼容。 */
 export type CanonicalQuestionType =

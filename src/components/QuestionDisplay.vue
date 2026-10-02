@@ -50,7 +50,7 @@
             @change="emitAnswer(key)"
             :disabled="disabled"
           />
-          <strong>{{ key }}:</strong><MarkdownContent class="option-content" :content="text" :format="question.format" />
+          <strong>{{ key }}:</strong><MarkdownContent class="option-content" :content="text" :format="inheritedContentFormat(question.format)" />
         </label>
       </div>
 
@@ -68,7 +68,7 @@
             @change="updateCheckbox(key)"
             :disabled="disabled"
           />
-          <strong>{{ key }}:</strong><MarkdownContent class="option-content" :content="text" :format="question.format" />
+          <strong>{{ key }}:</strong><MarkdownContent class="option-content" :content="text" :format="inheritedContentFormat(question.format)" />
         </label>
       </div>
 
@@ -159,6 +159,7 @@
       :is-correct="isCorrect"
       :correct-answer="question.answer"
       :explanation="question.explanation"
+      :explanation-format="question.explanationFormat"
       :user-answer="modelValue"
       :answer-format="question.answerFormat"
       :code-language="question.codeLanguage"
@@ -168,7 +169,7 @@
 
     <div v-if="isInWrongMode && question.wrongDescription" class="wrong-description">
       <strong>错题描述：</strong>
-      <MarkdownContent :content="question.wrongDescription" :format="question.format" />
+      <MarkdownContent :content="question.wrongDescription" :format="inheritedContentFormat(question.format)" />
     </div>
 
     <div class="wrong-question-controls" v-if="isInPracticeMode || isInWrongMode">
@@ -197,6 +198,7 @@ import type { Question, UserAnswer, AppMode, SubAnswer } from '../types'
 import ResultDisplay from './ResultDisplay.vue'
 import CompoundQuestion from './CompoundQuestion.vue'
 import MarkdownContent from './MarkdownContent.vue'
+import { inheritedContentFormat } from '../utils/contentFormat'
 import { useQuizStore } from '../stores/quizStore'
 import { showToast } from '../composables/useToast'
 

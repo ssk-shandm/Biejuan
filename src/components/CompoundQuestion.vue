@@ -38,7 +38,7 @@
                 @change="handleInput(sub.id, key)"
                 :disabled="isSubLocked(sub.id)"
               />
-              <strong>{{ key }}:</strong><MarkdownContent class="sub-option-content" :content="text" :format="sub.format" />
+              <strong>{{ key }}:</strong><MarkdownContent class="sub-option-content" :content="text" :format="inheritedContentFormat(sub.format)" />
             </label>
             <button
               v-if="!isSubLocked(sub.id)"
@@ -69,7 +69,7 @@
                 @change="updateCheckbox(sub.id, key)"
                 :disabled="isSubLocked(sub.id)"
               />
-              <strong>{{ key }}:</strong><MarkdownContent class="sub-option-content" :content="text" :format="sub.format" />
+              <strong>{{ key }}:</strong><MarkdownContent class="sub-option-content" :content="text" :format="inheritedContentFormat(sub.format)" />
             </label>
             <button
               v-if="!isSubLocked(sub.id)"
@@ -104,7 +104,7 @@
           </div>
           <div v-if="safeSubResults.get(sub.id)" class="sub-answer-display">
             <span class="sub-user-answer">你的答案：{{ userAnswers.get(sub.id) || '—' }}</span>
-            <span class="sub-correct-answer">正确答案：{{ sub.answer }}</span>
+            <div class="sub-correct-answer">正确答案：<MarkdownContent :content="sub.answer" :format="sub.answerFormat" /></div>
           </div>
         </template>
 
@@ -141,6 +141,7 @@
 import { ref, computed, watch } from 'vue'
 import type { Question, SubAnswer, AppMode, SubQuestion } from '../types'
 import MarkdownContent from './MarkdownContent.vue'
+import { inheritedContentFormat } from '../utils/contentFormat'
 
 const props = withDefaults(
   defineProps<{

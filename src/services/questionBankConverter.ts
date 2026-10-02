@@ -1,4 +1,6 @@
 import { renderPromptMessages, type LlmPromptConfig, type LoadedLlmFramework } from '../utils/llmFramework'
+import type { ContentFormat } from '../types'
+import { inheritedContentFormat, normalizeContentFormat } from '../utils/contentFormat'
 import { LlmTruncatedError, type ChatMessage, type LlmClient, type LlmLogger } from './llmClient'
 
 /**
@@ -81,6 +83,15 @@ const CONTINUATION_CHARACTERS = 2500
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value))
 const text = (value: unknown) => (value == null ? '' : String(value)).trim()
 const hasMarkdown = (...values: unknown[]) => values.some((value) => typeof value === 'string' && (value.includes('```') || /^\s*\|.+\|\s*$/m.test(value)))
+
+function resolveFieldFormat(value: unknown, content: unknown, fallback: ContentFormat): ContentFormat {
+  return normalizeContentFormat(value, hasMarkdown(content) ? 'markdown' : fallback)
+}
+
+function markdownContent(value: string, format: ContentFormat): string {
+  return value && (format === 'mermaid' || format === 'plantuml')
+    ? '\n\n```' + format + '\n' + value + '\n```\n' : value
+}
 
 // ── 行编号 ──
 
@@ -239,7 +250,7 @@ function answerFor(type: string, value: unknown, options: Record<string, string>
 
 const isEmptyAnswer = (value: unknown) => value == null || value === '' || (Array.isArray(value) && value.length === 0)
 
-function normalizeSubQuestion(raw: unknown, index: number): QuestionRecord | undefined {
+function normalizeSubQuestion(raw: unknown, index: number, parentFormat: ContentFormat, parentAnswerFormat: ContentFormat): QuestionRecord | undefined {
   if (!isRecord(raw)) return undefined
   let type = normalizeType(raw.type)
   if (!(SUB_QUESTION_TYPES as readonly string[]).includes(type)) type = type === 'true-false' ? 'fill' : 'short-answer'
@@ -248,10 +259,10 @@ function normalizeSubQuestion(raw: unknown, index: number): QuestionRecord | und
   const content = text(raw.content ?? raw.question ?? raw.stem)
   if (!content) return undefined
   const answer = answerFor(type, raw.answer, options)
-  const record: QuestionRecord = { id: index + 1, type, content, answer }
-  if (hasMarkdown(content)) record.format = 'markdown'
+  const format = normalizeContentFormat(raw.format, hasMarkdown(content, ...Object.values(options)) ? 'markdown' : parentFormat)
+  const record: QuestionRecord = { id: index + 1, type, content, answer, format }
   if (Object.keys(options).length) record.options = options
-  if (hasMarkdown(answer)) record.answerFormat = 'markdown'
+  record.answerFormat = resolveFieldFormat(raw.answerFormat, answer, raw.format == null ? parentAnswerFormat : inheritedContentFormat(format))
   if (text(raw.codeLanguage)) record.codeLanguage = text(raw.codeLanguage)
   if (type === 'multiple' && Array.isArray(answer) && answer.length === 1) record.answer = answer
   return record
@@ -264,15 +275,18 @@ function normalizeModelQuestion(raw: unknown, knownImages: Set<string>): Draft |
   let options = normalizeOptions(source.options)
   let content = text(source.content ?? source.question ?? source.stem ?? source.title)
   let scenario = text(source.scenario ?? source.material)
-  const subQuestions = Array.isArray(source.subQuestions)
-    ? source.subQuestions.map(normalizeSubQuestion).filter((item): item is QuestionRecord => Boolean(item))
-    : []
-
-  if (type === 'compound' && !subQuestions.length) type = 'short-answer'
   if (type === 'compound' && !content) {
     content = scenario
     scenario = ''
   }
+  const format = normalizeContentFormat(source.format, hasMarkdown(content, ...Object.values(options)) ? 'markdown' : 'text')
+  const inheritedFormat = inheritedContentFormat(format)
+  const parentAnswerFormat = normalizeContentFormat(source.answerFormat, inheritedFormat)
+  const subQuestions = Array.isArray(source.subQuestions)
+    ? source.subQuestions.map((sub, index) => normalizeSubQuestion(sub, index, inheritedFormat, parentAnswerFormat)).filter((item): item is QuestionRecord => Boolean(item))
+    : []
+
+  if (type === 'compound' && !subQuestions.length) type = 'short-answer'
   if ((type === 'single' || type === 'multiple') && Object.keys(options).length < 2) type = 'short-answer'
   if (type === 'single' && choiceLetters(source.answer, options).length > 1) type = 'multiple'
   const answer = type === 'compound' ? '' : answerFor(type, source.answer ?? source.correctAnswer, options)
@@ -298,11 +312,10 @@ function normalizeModelQuestion(raw: unknown, knownImages: Set<string>): Draft |
   // 题目是截图、只剩题号时，给出可读的占位题干
   if (images.length && /^[\s(（]*(?:\d{1,4}\s*[.、．:：)）]?|题干缺失)?[\s)）]*$/.test(String(record.content))) record.content = '（题目见图）'
 
-  const markdown = hasMarkdown(content, scenario, explanation, answer, ...Object.values(options))
-  record.format = markdown || source.format === 'markdown' ? 'markdown' : 'text'
-  if (hasMarkdown(answer)) record.answerFormat = 'markdown'
-  if (hasMarkdown(explanation)) record.explanationFormat = 'markdown'
-  if (hasMarkdown(scenario)) record.scenarioFormat = 'markdown'
+  record.format = format
+  record.answerFormat = normalizeContentFormat(source.answerFormat, hasMarkdown(answer) ? 'markdown' : inheritedFormat)
+  if (explanation) record.explanationFormat = normalizeContentFormat(source.explanationFormat, hasMarkdown(explanation) ? 'markdown' : inheritedFormat)
+  if (scenario) record.scenarioFormat = normalizeContentFormat(source.scenarioFormat, hasMarkdown(scenario) ? 'markdown' : inheritedFormat)
   if (text(source.codeLanguage)) record.codeLanguage = text(source.codeLanguage)
 
   const startLine = Number(source.startLine)
@@ -752,26 +765,38 @@ export async function convertDocumentToQuestionBank(options: ConvertOptions): Pr
           const explanation = text(item.explanation)
           let next: QuestionRecord
           if (target.subId === undefined) {
-            next = { ...record, answer }
+            next = {
+              ...record,
+              answer,
+              answerFormat: resolveFieldFormat(item.answerFormat, answer,
+                normalizeContentFormat(record.answerFormat, inheritedContentFormat(normalizeContentFormat(record.format)))),
+            }
             if (explanation && !text(record.explanation)) {
               next.explanation = explanation
-              if (hasMarkdown(explanation)) next.explanationFormat = 'markdown'
-            }
-            if (hasMarkdown(answer)) {
-              next.answerFormat = 'markdown'
-              next.format = 'markdown'
+              next.explanationFormat = resolveFieldFormat(item.explanationFormat, explanation,
+                normalizeContentFormat(record.explanationFormat, inheritedContentFormat(normalizeContentFormat(record.format))))
             }
           } else {
             // 小问没有 explanation 字段，解析并入外层题目的解析
             const subQuestions = (record.subQuestions as QuestionRecord[]).map((sub) => sub.id === target.subId
-              ? { ...sub, answer, ...(hasMarkdown(answer) ? { answerFormat: 'markdown' } : {}) }
+              ? {
+                ...sub,
+                answer,
+                answerFormat: resolveFieldFormat(item.answerFormat, answer,
+                  normalizeContentFormat(sub.answerFormat, inheritedContentFormat(normalizeContentFormat(sub.format)))),
+              }
               : sub)
             next = { ...record, subQuestions }
             if (explanation) {
-              next.explanation = [text(record.explanation), `（${target.subId}）${explanation}`].filter(Boolean).join('\n')
-              if (hasMarkdown(next.explanation)) next.explanationFormat = 'markdown'
+              const existingFormat = normalizeContentFormat(record.explanationFormat, inheritedContentFormat(normalizeContentFormat(record.format)))
+              const explanationFormat = resolveFieldFormat(item.explanationFormat, explanation, 'text')
+              const richText = existingFormat !== 'text' || explanationFormat !== 'text'
+              next.explanation = [
+                richText ? markdownContent(text(record.explanation), existingFormat) : text(record.explanation),
+                `（${target.subId}）${richText ? markdownContent(explanation, explanationFormat) : explanation}`,
+              ].filter(Boolean).join('\n')
+              next.explanationFormat = richText ? 'markdown' : 'text'
             }
-            if (hasMarkdown(answer)) next.format = 'markdown'
           }
           if ((await validateRecord(next)).valid) {
             draft.record = next

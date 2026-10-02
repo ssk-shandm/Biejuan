@@ -1,4 +1,5 @@
 import DOMPurify from 'dompurify'
+import type { ContentFormat } from '../types'
 import { marked } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 import hljs from 'highlight.js/lib/core'
@@ -37,7 +38,15 @@ const DIAGRAM_FENCE = /```\s*(mermaid|plantuml|puml)\s*\r?\n([\s\S]*?)```/gi
  * Markdown 安全渲染入口。图表代码先被抽离，普通 HTML 经 DOMPurify 清洗，
  * Mermaid/PlantUML 再由 MarkdownContent 在隔离容器中渲染。
  */
-export function renderMarkdownDocument(content: string): MarkdownDocument {
+export function renderMarkdownDocument(content: string, format: ContentFormat = 'markdown'): MarkdownDocument {
+  if (format === 'mermaid' || format === 'plantuml') {
+    const source = String(content ?? '').trim()
+    const fenced = source.match(/^```(?:mermaid|plantuml|puml)\s*\r?\n([\s\S]*?)\r?\n```\s*$/i)
+    return {
+      html: source ? '<div class="diagram-placeholder" data-diagram-index="0" role="img" aria-label="diagram"></div>' : '',
+      diagrams: source ? [{ type: format, source: (fenced?.[1] ?? source).trim() }] : [],
+    }
+  }
   const diagrams: DiagramBlock[] = []
   const source = String(content ?? '').replace(DIAGRAM_FENCE, (_match, language: string, code: string) => {
     const index = diagrams.length

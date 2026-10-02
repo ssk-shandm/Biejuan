@@ -1,6 +1,6 @@
 <template>
-  <component :is="tag" ref="root" class="markdown-content" :class="{ 'plain-content': format === 'text' }">
-    <template v-if="format === 'text'">{{ content }}</template>
+  <component :is="tag" ref="root" class="markdown-content" :class="{ 'plain-content': resolvedFormat === 'text' }">
+    <template v-if="resolvedFormat === 'text'">{{ content }}</template>
     <template v-else><div class="markdown-html" v-html="renderedDocument.html"></div></template>
   </component>
 </template>
@@ -13,6 +13,7 @@ let mermaidInitialized = false
 import DOMPurify from 'dompurify'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import type { ContentFormat } from '../types'
+import { normalizeContentFormat } from '../utils/contentFormat'
 import { renderMarkdownDocument } from '../utils/markdown'
 import { buildPlantUmlUrl, loadDiagramRendererConfig } from '../utils/diagramConfig'
 
@@ -27,13 +28,14 @@ const props = withDefaults(defineProps<{
 })
 
 const root = ref<HTMLElement | null>(null)
-const renderedDocument = computed(() => renderMarkdownDocument(props.content))
+const resolvedFormat = computed(() => normalizeContentFormat(props.format))
+const renderedDocument = computed(() => renderMarkdownDocument(props.content, resolvedFormat.value))
 let renderVersion = 0
 
 async function renderDiagrams() {
   const version = ++renderVersion
   await nextTick()
-  if (props.format !== 'markdown' || !root.value || renderedDocument.value.diagrams.length === 0) return
+  if (resolvedFormat.value === 'text' || !root.value || renderedDocument.value.diagrams.length === 0) return
 
   const config = await loadDiagramRendererConfig()
   const mermaidBlocks = renderedDocument.value.diagrams.some((diagram) => diagram.type === 'mermaid')

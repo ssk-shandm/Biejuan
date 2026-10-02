@@ -87,5 +87,61 @@
     ],
     "answer": "",
     "explanation": "复合题由各子题分别提交和判分。"
+  },
+  {
+    "id": "txt-001",
+    "number": 8,
+    "type": "short-answer",
+    "content": "解释字符串 **name** 的含义（星号按原文显示）。",
+    "format": "txt",
+    "answer": "它是包含星号的普通字符串。"
+  },
+  {
+    "id": "mermaid-001",
+    "number": 9,
+    "type": "single",
+    "content": "flowchart LR\n  A[开始] --> B[完成]",
+    "format": "mermaid",
+    "options": { "A": "从开始到完成", "B": "从完成到开始" },
+    "answer": "A",
+    "explanation": "箭头从 A 指向 B。"
+  },
+  {
+    "id": "plantuml-001",
+    "number": 10,
+    "type": "short-answer",
+    "content": "@startuml\nAlice -> Bob: Hello\n@enduml",
+    "format": "plantuml",
+    "answer": "Alice 向 Bob 发送 Hello。",
+    "answerFormat": "text"
+  },
+  {
+    "id": "compound-diagram-001",
+    "number": 11,
+    "type": "compound",
+    "content": "阅读图表并回答问题。",
+    "format": "text",
+    "scenario": "flowchart LR\n  A[输入] --> B[处理] --> C[输出]",
+    "scenarioFormat": "mermaid",
+    "subQuestions": [
+      {
+        "id": 1,
+        "type": "short-answer",
+        "content": "说明处理步骤。",
+        "format": "txt",
+        "answer": "输入、处理、输出。"
+      },
+      {
+        "id": 2,
+        "type": "short-answer",
+        "content": "flowchart LR\n  A --> B",
+        "format": "mermaid",
+        "answer": "**A** 指向 **B**。",
+        "answerFormat": "markdown"
+      }
+    ],
+    "answer": "",
+    "explanation": "**输出** 是最后一步。",
+    "explanationFormat": "markdown"
   }
 ]

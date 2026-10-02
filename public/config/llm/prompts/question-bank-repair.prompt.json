@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "question-bank-repair",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "name": "题目 JSON 校验修复",
   "description": "只修复未通过 Schema 校验的题目，不重新生成题目、不改变事实内容。",
   "variables": {
@@ -20,7 +20,7 @@
     },
     {
       "role": "user",
-      "content": "下面的题目未通过校验，请修复后按 {\"questions\": [...]} 格式输出，题目数量和顺序保持不变。\n\n字段约定：type 只能是 single、multiple、true-false、fill、short-answer、program-analysis、code、compound；single/multiple 必须有至少两个大写字母键的 options，没有选项时改为 fill 或 short-answer；single 的 answer 是一个大写字母，multiple 是大写字母数组，true-false 是 true 或 false，其他题型是字符串，未知答案用空字符串；compound 必须有 subQuestions（每项含整数 id、type、content、answer），小问 type 不能是 true-false 或 compound；content 不能为空，空题干时用原文补齐，原文也没有时把该题 content 写成 \"(题干缺失)\"。\n\n校验错误：\n{{validationErrors}}\n\n待修复内容：\n<invalid_output>\n{{invalidOutput}}\n</invalid_output>\n\n原文仅供核对，不得据此扩写：\n<source_document>\n{{sourceText}}\n</source_document>"
+      "content": "下面的题目未通过校验，请修复后按 {\"questions\": [...]} 格式输出，题目数量和顺序保持不变。\n\n字段约定：type 只能是 single、multiple、true-false、fill、short-answer、program-analysis、code、compound；single/multiple 必须有至少两个大写字母键的 options，没有选项时改为 fill 或 short-answer；single 的 answer 是一个大写字母，multiple 是大写字母数组，true-false 是 true 或 false，其他题型是字符串，未知答案用空字符串；compound 必须有 subQuestions（每项含整数 id、type、content、answer），小问 type 不能是 true-false 或 compound；content 不能为空，空题干时用原文补齐，原文也没有时把该题 content 写成 \"(题干缺失)\"。\n\n格式约定：每道题和每个小问输出 format，取值 text（兼容 txt）、markdown、mermaid 或 plantuml；answerFormat、scenarioFormat、explanationFormat 可独立指定同样的格式。保留已有合法格式，md/mmd/puml 等别名转换为 markdown/mermaid/plantuml；缺少格式时按对应内容补充。代码、表格、文字混合图表使用 markdown，纯图表源码才使用 mermaid/plantuml；图表题干的普通答案、解析、材料、选项和小问默认 text。不得因答案格式改变题干 format，不得把图表源码改写为说明文字。\n\n校验错误：\n{{validationErrors}}\n\n待修复内容：\n<invalid_output>\n{{invalidOutput}}\n</invalid_output>\n\n原文仅供核对，不得据此扩写：\n<source_document>\n{{sourceText}}\n</source_document>"
     }
   ],
   "response": {

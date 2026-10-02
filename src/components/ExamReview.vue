@@ -57,6 +57,7 @@
           :explanation="question.explanation"
           :user-answer="answerSheet.get(question.number)?.userAnswer ?? ''"
           :answer-format="question.answerFormat"
+          :explanation-format="question.explanationFormat"
           :code-language="question.codeLanguage"
           :answer-detail="question.answerDetail"
           :question-type="question.type"
@@ -75,7 +76,7 @@
           >
             <div class="review-sub-header">
               <span class="review-sub-num">{{ question.number }}.{{ sub.id }}</span>
-              <span class="review-sub-q">{{ sub.question }}</span>
+              <MarkdownContent class="review-sub-q" :content="sub.question" :format="sub.format" />
               <span
                 v-if="getSubReviewResult(question.number, sub.id) === true"
                 class="review-sub-badge correct"
@@ -91,7 +92,7 @@
               class="review-sub-answers"
             >
               <span class="review-sub-user">你的答案：{{ getSubUserAnswer(question.number, sub.id) || '（未作答）' }}</span>
-              <span class="review-sub-correct">正确答案：{{ formatSubAnswer(sub) }}</span>
+              <div class="review-sub-correct">正确答案：<MarkdownContent :content="formatSubAnswer(sub)" :format="sub.answerFormat" /></div>
             </div>
           </div>
         </div>
@@ -106,6 +107,7 @@ import type { Question, UserAnswer, SubAnswer } from '../types'
 import AnswerCard from './AnswerCard.vue'
 import QuestionDisplay from './QuestionDisplay.vue'
 import ResultDisplay from './ResultDisplay.vue'
+import MarkdownContent from './MarkdownContent.vue'
 
 // 定义 props
 const props = defineProps<{

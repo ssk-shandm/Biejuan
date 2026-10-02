@@ -21,6 +21,7 @@ type ReleaseAsset = {
 const version = ref(APP_VERSION_FALLBACK)
 const isUpdating = ref(false)
 const isDownloading = ref(false)
+const downloadProgress = ref('')
 const updateInfo = ref<RemoteVersion | null>(null)
 const updateError = ref('')
 let versionPromise: Promise<void> | null = null
@@ -82,7 +83,7 @@ export function useVersion() {
           const installer = Array.isArray(data.assets)
             ? data.assets.find((asset: ReleaseAsset) => {
               const name = String(asset.name ?? '').toLowerCase()
-              return name.endsWith('-setup.exe') || name.endsWith('.exe')
+              return name.endsWith('-setup.exe')
             })
             : undefined
           updateInfo.value = {
@@ -123,19 +124,32 @@ export function useVersion() {
 
     const { invoke } = await import('@tauri-apps/api/core')
     const { listen } = await import('@tauri-apps/api/event')
-    let unlisten: (() => void) | null = null
+
+    const unlisteners: Array<() => void> = []
+    downloadProgress.value = ''
+    // 终端日志只按 10% 步进记录，界面上的进度文本则实时刷新
+    let lastLoggedStep = -1
 
     try {
-      unlisten = await listen<{ downloaded: number; total: number | null; percent: number | null; fileName: string }>(
+      unlisteners.push(await listen<{ downloaded: number; total: number | null; percent: number | null; fileName: string }>(
         'update-download-progress',
         (event) => {
           const { downloaded, total, percent } = event.payload
           const size = (downloaded / 1024 / 1024).toFixed(1) + ' MB'
           const totalText = total ? ' / ' + (total / 1024 / 1024).toFixed(1) + ' MB' : ''
           const progress = percent === null ? size + totalText : percent + '% (' + size + totalText + ')'
-          addRuntimeLog('info', 'Download progress: ' + progress)
+          downloadProgress.value = progress
+          const step = percent === null ? Math.floor(downloaded / (10 * 1024 * 1024)) : Math.floor(percent / 10)
+          if (step !== lastLoggedStep) {
+            lastLoggedStep = step
+            addRuntimeLog('info', '下载进度：' + progress)
+          }
         },
-      )
+      ))
+      unlisteners.push(await listen<string>('update-install-starting', (event) => {
+        downloadProgress.value = '正在启动安装程序…'
+        addRuntimeLog('info', '安装包已保存到：' + event.payload + '，正在启动安装程序')
+      }))
       await invoke('download_and_install_update', { url: info.installerUrl, fileName: info.installerName })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -143,8 +157,9 @@ export function useVersion() {
       addRuntimeLog('error', 'Update download failed: ' + message)
       throw error
     } finally {
-      if (unlisten) await unlisten()
+      unlisteners.forEach((unlisten) => unlisten())
       isDownloading.value = false
+      downloadProgress.value = ''
     }
   }
   function clearUpdate() {
@@ -156,6 +171,7 @@ export function useVersion() {
     version,
     isUpdating,
     isDownloading,
+    downloadProgress,
     updateInfo,
     updateError,
     checkUpdate,

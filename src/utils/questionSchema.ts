@@ -7,6 +7,7 @@ import type {
   SubQuestion,
   SubQuestionSource,
 } from '../types'
+import { inheritedContentFormat, normalizeContentFormat } from './contentFormat'
 
 const TYPE_MAP: Record<string, QuestionType> = {
   single: '单选题', 单选: '单选题', 单选题: '单选题',
@@ -28,10 +29,6 @@ const CANONICAL_TYPE_MAP: Record<QuestionType, CanonicalQuestionType> = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function normalizeFormat(value: unknown, fallback: ContentFormat = 'text'): ContentFormat {
-  return value === 'markdown' || value === 'text' ? value : fallback
 }
 
 function normalizeAnswer(value: unknown): string {
@@ -91,8 +88,9 @@ function normalizeSubQuestion(
   else if (['multiple', '多选', '多选题'].includes(rawType)) type = '多选题'
   else if (['fill', '填空', '填空题'].includes(rawType)) type = '填空题'
 
-  const format = normalizeFormat(source.format, parentFormat)
-  const answerFormat = normalizeFormat(source.answerFormat, parentAnswerFormat)
+  const format = normalizeContentFormat(source.format, parentFormat)
+  const answerFormat = normalizeContentFormat(source.answerFormat,
+    source.format == null ? parentAnswerFormat : inheritedContentFormat(format))
   return {
     id: Number.isFinite(source.id) ? Number(source.id) : index + 1,
     question,
@@ -114,10 +112,11 @@ function normalizeQuestion(value: unknown, index: number, sourceName: string): Q
   if (!question) throw new Error(`${path}.content（或旧字段 question）不能为空`)
 
   const type = normalizeQuestionType(source.type, path)
-  const format = normalizeFormat(source.format)
-  const answerFormat = normalizeFormat(source.answerFormat, format)
-  const scenarioFormat = normalizeFormat(source.scenarioFormat, format)
-  const explanationFormat = normalizeFormat(source.explanationFormat, format)
+  const format = normalizeContentFormat(source.format)
+  const inheritedFormat = inheritedContentFormat(format)
+  const answerFormat = normalizeContentFormat(source.answerFormat, inheritedFormat)
+  const scenarioFormat = normalizeContentFormat(source.scenarioFormat, inheritedFormat)
+  const explanationFormat = normalizeContentFormat(source.explanationFormat, inheritedFormat)
   let answer = normalizeAnswer(source.answer)
   if (type === '判断题') answer = normalizeTrueFalseAnswer(answer)
 
@@ -144,7 +143,7 @@ function normalizeQuestion(value: unknown, index: number, sourceName: string): Q
     scenario: source.scenario == null ? undefined : String(source.scenario),
     scenarioFormat,
     subQuestions: rawSubQuestions?.map((sub, subIndex) =>
-      normalizeSubQuestion(sub, subIndex, format, answerFormat, source.codeLanguage),
+      normalizeSubQuestion(sub, subIndex, inheritedFormat, answerFormat, source.codeLanguage),
     ),
   }
 }

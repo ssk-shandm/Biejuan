@@ -9,7 +9,7 @@
     <div v-if="showAnswerBlock" class="answer-block">
       <p v-if="!isShortAnswer"><strong>参考答案：</strong></p>
       <MarkdownContent
-        :class="isMarkdownAnswer ? 'markdown-answer-content' : 'plain-answer'"
+        :class="isRichAnswer ? 'markdown-answer-content' : 'plain-answer'"
         :content="correctAnswer"
         :format="answerFormat || 'text'"
       />
@@ -25,6 +25,7 @@
 import { computed } from 'vue'
 import type { ContentFormat, UserAnswer } from '../types'
 import MarkdownContent from './MarkdownContent.vue'
+import { normalizeContentFormat } from '../utils/contentFormat'
 
 const props = withDefaults(defineProps<{
   isCorrect: boolean
@@ -46,8 +47,8 @@ const props = withDefaults(defineProps<{
 })
 
 const isShortAnswer = computed(() => props.questionType === '简答题' || props.questionType === '简答')
-const isMarkdownAnswer = computed(() => props.answerFormat === 'markdown')
-const showAnswerBlock = computed(() => isMarkdownAnswer.value || isShortAnswer.value)
+const isRichAnswer = computed(() => normalizeContentFormat(props.answerFormat) !== 'text')
+const showAnswerBlock = computed(() => isRichAnswer.value || isShortAnswer.value)
 
 const acceptedAlternatives = computed(() => {
   if (!props.answerDetail?.accepts?.length) return []
@@ -63,7 +64,7 @@ const resultTextClass = computed(() => {
 const resultText = computed(() => {
   if (isShortAnswer.value) return '参考回答：'
   if (props.isCorrect) return '回答正确！'
-  if (isMarkdownAnswer.value) return '回答错误。正确答案见下方。'
+  if (isRichAnswer.value) return '回答错误。正确答案见下方。'
   return `回答错误。正确答案: ${props.correctAnswer}。`
 })
 </script>
