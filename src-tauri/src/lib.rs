@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 #[cfg(not(target_os = "android"))]
 use std::process::Command;
 use tauri::{Emitter, Manager as _};
+mod public_banks;
 
 const DEFAULT_LLM_CONFIG: &str = include_str!("../../config/llm-config.json");
 
@@ -155,6 +156,8 @@ fn open_directory(path: &Path) -> std::io::Result<()> {
 /// builds point at the `public` directory copied beside the installed app resources.
 #[tauri::command]
 fn open_content_location(app: tauri::AppHandle, location: &str) -> Result<String, String> {
+    // Open the same public directory that is bundled beside the installed app.
+    // User-generated banks remain in app data and are scanned separately.
     let target = content_directory(&app, location)?;
     if !target.is_dir() {
         return Err(format!("资源目录不存在：{}", target.display()));
@@ -163,28 +166,30 @@ fn open_content_location(app: tauri::AppHandle, location: &str) -> Result<String
     Ok(target.to_string_lossy().into_owned())
 }
 
-fn content_directory(_app: &tauri::AppHandle, location: &str) -> Result<PathBuf, String> {
+fn public_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    #[cfg(debug_assertions)]
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("public");
+
+    #[cfg(not(debug_assertions))]
+    let root = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("无法获取应用资源目录：{error}"))?
+        .join("public");
+
+    Ok(root)
+}
+
+fn content_directory(app: &tauri::AppHandle, location: &str) -> Result<PathBuf, String> {
     let directory_name = match location {
         "subjects" => "subjects",
         "images" => "images",
         _ => return Err("不支持的资源位置".to_string()),
     };
 
-    #[cfg(debug_assertions)]
-    let target = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("public")
-        .join(directory_name);
-
-    #[cfg(not(debug_assertions))]
-    let target = _app
-        .path()
-        .resource_dir()
-        .map_err(|error| format!("无法获取应用资源目录：{error}"))?
-        .join("public")
-        .join(directory_name);
-
-    Ok(target)
+    Ok(public_directory(app)?.join(directory_name))
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -195,8 +200,22 @@ struct QuestionBankEntry {
 }
 
 #[tauri::command]
+fn save_question_bank(
+    app: tauri::AppHandle,
+    payload: public_banks::BankPayload,
+) -> Result<public_banks::BankSaveResult, String> {
+    let root = public_directory(&app)?;
+    public_banks::save_bank(&root, "/subjects", payload)
+}
+
+#[tauri::command]
 fn list_question_banks(app: tauri::AppHandle) -> Result<Vec<QuestionBankEntry>, String> {
-    let target = content_directory(&app, "subjects")?;
+    let mut banks = scan_question_banks(&content_directory(&app, "subjects")?, "/subjects")?;
+    banks.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(banks)
+}
+
+fn scan_question_banks(target: &Path, prefix: &str) -> Result<Vec<QuestionBankEntry>, String> {
     if !target.exists() {
         return Ok(Vec::new());
     }
@@ -233,7 +252,7 @@ fn list_question_banks(app: tauri::AppHandle) -> Result<Vec<QuestionBankEntry>, 
             .to_owned();
         banks.push(QuestionBankEntry {
             name,
-            file: format!("/subjects/{file_name}"),
+            file: format!("{prefix}/{file_name}"),
         });
     }
 
@@ -243,6 +262,7 @@ fn list_question_banks(app: tauri::AppHandle) -> Result<Vec<QuestionBankEntry>, 
 
 #[tauri::command]
 fn read_question_bank(app: tauri::AppHandle, file: &str) -> Result<String, String> {
+    let directory = content_directory(&app, "subjects")?;
     let file_name = file.strip_prefix("/subjects/").ok_or("不支持的题库路径")?;
     if file_name.is_empty()
         || file_name.contains(['/', '\\', ':'])
@@ -253,7 +273,7 @@ fn read_question_bank(app: tauri::AppHandle, file: &str) -> Result<String, Strin
     {
         return Err("不支持的题库文件名".to_string());
     }
-    let directory = content_directory(&app, "subjects")?
+    let directory = directory
         .canonicalize()
         .map_err(|error| format!("无法读取题库目录：{error}"))?;
     let target = directory
@@ -263,9 +283,14 @@ fn read_question_bank(app: tauri::AppHandle, file: &str) -> Result<String, Strin
     if target.parent() != Some(directory.as_path()) || !target.is_file() {
         return Err("题库文件必须位于 public/subjects 目录内".to_string());
     }
-    fs::read_to_string(target)
+    let content = fs::read_to_string(&target)
         .map(|text| text.trim_start_matches('\u{feff}').to_owned())
-        .map_err(|error| format!("无法读取题库，请使用 UTF-8 编码保存：{error}"))
+        .map_err(|error| format!("无法读取题库，请使用 UTF-8 编码保存：{error}"))?;
+    public_banks::inline_bank_images(
+        content,
+        directory.parent().ok_or("无法获取 public 目录")?,
+        &target,
+    )
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -503,6 +528,7 @@ pub fn run() {
             open_content_location,
             list_question_banks,
             read_question_bank,
+            save_question_bank,
             read_llm_config,
             write_llm_config,
             open_llm_config_file,

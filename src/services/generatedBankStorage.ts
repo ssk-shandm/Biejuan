@@ -28,7 +28,7 @@ async function withStore<T>(mode: IDBTransactionMode, run: (store: IDBObjectStor
   })
 }
 
-export async function saveGeneratedBank(name: string, directory: string, content: string, images: DocumentImageAsset[]): Promise<string> {
+export async function saveGeneratedBank(name: string, directory: string, content: string, images: Pick<DocumentImageAsset, 'fileName' | 'blob'>[]): Promise<string> {
   const file = `${GENERATED_BANK_PREFIX}${encodeURIComponent(directory)}`
   const bank: SavedBank = {
     file,
@@ -42,12 +42,12 @@ export async function saveGeneratedBank(name: string, directory: string, content
 }
 
 /** Delete selected locally generated banks in one IndexedDB transaction. */
-export async function deleteGeneratedBanks(files: string[]): Promise<void> {
+export async function deleteGeneratedBanks(files: string[], notify = true): Promise<void> {
   if (files.some(file => !file.startsWith(GENERATED_BANK_PREFIX))) throw new Error('只能删除应用内转换的题库')
   await withStore<void>('readwrite', store => {
     for (const file of files) store.delete(file)
   })
-  window.dispatchEvent(new CustomEvent(GENERATED_BANKS_CHANGED))
+  if (notify) window.dispatchEvent(new CustomEvent(GENERATED_BANKS_CHANGED))
 }
 
 export async function listGeneratedBanks(): Promise<{ name: string; file: string }[]> {
@@ -66,12 +66,17 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   })
 }
 
-export async function readGeneratedBank(file: string): Promise<unknown> {
+export async function readStoredGeneratedBank(file: string): Promise<SavedBank> {
   const bank = await withStore<SavedBank | undefined>('readonly', (store, resolve) => {
     const request = store.get(file)
     request.onsuccess = () => resolve(request.result as SavedBank | undefined)
   })
   if (!bank) throw new Error(`本地题库不存在：${file}`)
+  return bank
+}
+
+export async function readGeneratedBank(file: string): Promise<unknown> {
+  const bank = await readStoredGeneratedBank(file)
   // Keep original JSON intact for downloads; inline image data only in the loaded copy.
   let content = bank.content
   const directory = decodeURIComponent(file.slice(GENERATED_BANK_PREFIX.length))

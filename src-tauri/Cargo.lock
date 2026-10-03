@@ -6,6 +6,7 @@ version = 4
 name = "aaa"
 version = "0.1.4"
 dependencies = [
+ "base64 0.22.1",
  "reqwest",
  "serde",
  "serde_json",

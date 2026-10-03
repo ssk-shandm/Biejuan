@@ -7,6 +7,7 @@ import { showToast, showConfirm } from './useToast'
 import { isJsonFile, readImportedText } from '../services/fileService'
 import { GENERATED_BANK_PREFIX, GENERATED_BANKS_CHANGED, listGeneratedBanks, readGeneratedBank, saveGeneratedBank } from '../services/generatedBankStorage'
 import { listPublicBanks, readPublicBank } from '../services/publicBankStorage'
+import { PUBLIC_BANKS_CHANGED, migrateGeneratedBanksToPublic } from '../services/publicBankWriter'
 
 export interface BankEntry {
   name: string
@@ -93,6 +94,11 @@ export function useQuiz() {
   // ── 题库清单加载 ──
   async function loadBanks() {
     const warnings: string[] = []
+    try {
+      warnings.push(...await migrateGeneratedBanksToPublic())
+    } catch (error) {
+      console.error('迁移本地题库失败:', error)
+    }
     let discoveredBanks: BankEntry[] | null = null
     try {
       discoveredBanks = await listPublicBanks()
@@ -1012,13 +1018,24 @@ export function useQuiz() {
     }
   }
 
+  async function handlePublicBankChange(event: Event) {
+    await refreshBanks()
+    const file = (event as CustomEvent<string>).detail
+    if (file && banks.value.some(bank => bank.file === file)) {
+      await loadQuestions(file, false)
+      localStorage.setItem(LAST_BANK_KEY, file)
+    }
+  }
+
   onMounted(async () => {
+    window.addEventListener(PUBLIC_BANKS_CHANGED, handlePublicBankChange)
     window.addEventListener(GENERATED_BANKS_CHANGED, handleGeneratedBankChange)
     await refreshBanks()
     window.addEventListener('popstate', handlePopState)
   })
 
   onUnmounted(() => {
+    window.removeEventListener(PUBLIC_BANKS_CHANGED, handlePublicBankChange)
     flushSessionSave()
     window.removeEventListener('popstate', handlePopState)
     window.removeEventListener(GENERATED_BANKS_CHANGED, handleGeneratedBankChange)

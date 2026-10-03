@@ -60,7 +60,8 @@
     <div v-if="outputText" class="panel-card output-panel">
       <div class="output-heading">
         <div><span class="section-label">转换完成</span><h4>题库 JSON</h4><p>「{{ outputBankName }}」{{ outputQuestionCount }} 道题<span v-if="outputSummary">（{{ outputSummary }}）</span><span v-if="imageAssets.length">，已提取 {{ imageAssets.length }} 张图片</span>，{{ outputSaved ? '已保存到本机题库，返回主页即可选择。' : '尚未保存到本机题库，可重试保存或先下载 JSON。' }}请人工检查答案和图表引用。</p></div>
-        <div class="inline-actions"><button v-if="!outputSaved" class="primary-action compact" @click="retrySave">重试保存到题库</button><button class="secondary-action" @click="copyOutput">复制</button><button class="secondary-action" :disabled="!imageAssets.length" @click="downloadPackage">下载题库包（含图片）</button><button class="primary-action compact" @click="downloadOutput">下载 JSON</button></div>
+        <p v-if="outputSaved && outputLocation">保存位置：{{ outputLocation }}</p>
+        <div class="inline-actions"><button v-if="!outputSaved" class="primary-action compact" @click="retrySave">重试保存到题库</button><button class="secondary-action" @click="copyOutput">复制</button><button class="secondary-action" :disabled="!imageAssets.length" @click="downloadPackage">备份题库包（含图片）</button><button class="secondary-action" @click="downloadOutput">备份 JSON</button></div>
       </div>
       <textarea :value="outputText" rows="16" readonly aria-label="转换后的题库 JSON"></textarea>
     </div>
@@ -77,7 +78,7 @@ import { extractDocxDocument, extractPptxDocument, type DocumentImageAsset, type
 import { pdfItemsToText } from '../utils/pdfText'
 import { createLlmClient, type LlmLogLevel } from '../services/llmClient'
 import { convertDocumentToQuestionBank, type ValidationResult } from '../services/questionBankConverter'
-import { saveGeneratedBank } from '../services/generatedBankStorage'
+import { savePublicBank } from '../services/publicBankWriter'
 import { saveExportBlob } from '../services/fileService'
 import { normalizeQuestionBank } from '../utils/questionSchema'
 import { usePlatform } from '../composables/usePlatform'
@@ -97,6 +98,7 @@ const frameworkStatus=ref<'loading'|'ready'|'error'>('loading'), frameworkError=
 const bankName=ref(''), outputBankName=ref(''), startNumber=ref(1), sourceName=ref(''), sourceExtension=ref(''), sourceText=ref(''), sourceFiles=ref<SourceFileState[]>([])
 const allowRemoteProcessing=ref(false), isDragging=ref(false), isExtracting=ref(false), isConverting=ref(false)
 const imageAssets=ref<DocumentImageAsset[]>([])
+const outputLocation=ref('')
 const convertMessage=ref(''), convertMessageType=ref<'success'|'error'>('success'), outputText=ref(''), outputQuestionCount=ref(0), outputSaved=ref(false), outputSummary=ref('')
 const fileInput=ref<HTMLInputElement|null>(null)
 let schemaValidator: (((value:unknown)=>boolean)&{errors?:SchemaError[]|null})|null=null
@@ -279,7 +281,8 @@ async function persistOutput(){
   const questions = normalizeQuestionBank(JSON.parse(outputText.value), outputBankName.value)
   if (!questions.length) throw new Error('转换结果中没有有效题目，无法保存到本机题库')
   try {
-    await saveGeneratedBank(outputBankName.value, safeImageDirectoryName(outputBankName.value), outputText.value, imageAssets.value)
+    const saved = await savePublicBank(outputBankName.value, safeImageDirectoryName(outputBankName.value), outputText.value, imageAssets.value)
+    outputLocation.value = saved.location
     outputSaved.value = true
   } catch (error) {
     throw new Error(`题目已解析，但保存到本机题库失败（可先下载 JSON 备份）：${errorMessage(error)}`)
@@ -723,4 +726,3 @@ p {
   }
 }
 </style>
-

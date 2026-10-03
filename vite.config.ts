@@ -6,6 +6,7 @@ import { join, extname } from 'node:path'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueDevTools from 'vite-plugin-vue-devtools'
+import { publicBanksApi } from './scripts/public-banks-api'
 
 /** Vite 鎻掍欢锛氫负姣忎釜閿欓鏈垱寤虹嫭绔嬬殑 JSON 鏂囦欢锛堝儚 public/subjects/ 涓€鏍凤級 */
 function wrongNotebooksApi() {
@@ -173,6 +174,7 @@ export default defineConfig(({ mode }) => ({
     vueDevTools(),
     wrongNotebooksApi(),
     llmConfigApi(),
+    publicBanksApi(),
   ],
   build: {
     // Mermaid 鍜?PDF.js 閮芥槸鎸夐渶鍔犺浇鐨勭嫭绔?chunk锛涘畠浠殑瑙ｆ瀽鍣ㄨ秴杩?Vite 榛樿 500 KB锛?
