@@ -64,7 +64,7 @@ export function migrateGeneratedBanksToPublic(): Promise<string[]> {
         if (localStorage.getItem('lastBank') === entry.file) localStorage.setItem('lastBank', result.file)
         await deleteGeneratedBanks([entry.file], false)
       } catch (error) {
-        warnings.push(`「${entry.name}」写入 public 失败，原题库仍保留：${error instanceof Error ? error.message : String(error)}`)
+        warnings.push(`「${entry.name}」写入本地题库目录失败，原题库仍保留：${error instanceof Error ? error.message : String(error)}`)
       }
     }
     return warnings

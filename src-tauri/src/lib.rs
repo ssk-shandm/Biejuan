@@ -150,30 +150,25 @@ fn open_directory(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Open the built-in question-bank or image-library directory.
-///
-/// Development builds point at the repository's `public` directory. Packaged
-/// builds point at the `public` directory copied beside the installed app resources.
+/// Open the writable question-bank or image-library directory.
+/// Packaged resources are read-only; installed apps write to per-user app data.
 #[tauri::command]
 fn open_content_location(app: tauri::AppHandle, location: &str) -> Result<String, String> {
-    // Open the same public directory that is bundled beside the installed app.
-    // User-generated banks remain in app data and are scanned separately.
-    let target = content_directory(&app, location)?;
-    if !target.is_dir() {
-        return Err(format!("资源目录不存在：{}", target.display()));
-    }
+    let directory_name = content_directory_name(location)?;
+    let target = writable_content_root(&app)?.join(directory_name);
+    fs::create_dir_all(&target).map_err(|error| format!("无法创建资源目录：{error}"))?;
     open_directory(&target).map_err(|error| format!("无法打开资源目录：{error}"))?;
     Ok(target.to_string_lossy().into_owned())
 }
 
-fn public_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn public_directory(_app: &tauri::AppHandle) -> Result<PathBuf, String> {
     #[cfg(debug_assertions)]
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("public");
 
     #[cfg(not(debug_assertions))]
-    let root = app
+    let root = _app
         .path()
         .resource_dir()
         .map_err(|error| format!("无法获取应用资源目录：{error}"))?
@@ -182,14 +177,34 @@ fn public_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(root)
 }
 
-fn content_directory(app: &tauri::AppHandle, location: &str) -> Result<PathBuf, String> {
-    let directory_name = match location {
-        "subjects" => "subjects",
-        "images" => "images",
-        _ => return Err("不支持的资源位置".to_string()),
-    };
+fn user_content_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_local_data_dir()
+        .map(|directory| directory.join("content"))
+        .map_err(|error| format!("无法获取应用数据目录：{error}"))
+}
 
-    Ok(public_directory(app)?.join(directory_name))
+fn writable_content_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    #[cfg(debug_assertions)]
+    {
+        public_directory(app)
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        user_content_root(app)
+    }
+}
+
+fn content_directory_name(location: &str) -> Result<&str, String> {
+    match location {
+        "subjects" => Ok("subjects"),
+        "images" => Ok("images"),
+        _ => Err("不支持的资源位置".to_string()),
+    }
+}
+
+fn content_directory(app: &tauri::AppHandle, location: &str) -> Result<PathBuf, String> {
+    Ok(public_directory(app)?.join(content_directory_name(location)?))
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -197,6 +212,7 @@ fn content_directory(app: &tauri::AppHandle, location: &str) -> Result<PathBuf, 
 struct QuestionBankEntry {
     name: String,
     file: String,
+    deletable: bool,
 }
 
 #[tauri::command]
@@ -204,18 +220,40 @@ fn save_question_bank(
     app: tauri::AppHandle,
     payload: public_banks::BankPayload,
 ) -> Result<public_banks::BankSaveResult, String> {
-    let root = public_directory(&app)?;
-    public_banks::save_bank(&root, "/subjects", payload)
+    let root = writable_content_root(&app)?;
+    let prefix = if cfg!(debug_assertions) {
+        "/subjects"
+    } else {
+        "/user-subjects"
+    };
+    public_banks::save_bank(&root, prefix, payload)
 }
 
 #[tauri::command]
 fn list_question_banks(app: tauri::AppHandle) -> Result<Vec<QuestionBankEntry>, String> {
-    let mut banks = scan_question_banks(&content_directory(&app, "subjects")?, "/subjects")?;
+    list_question_banks_from_directories(
+        &content_directory(&app, "subjects")?,
+        &user_content_root(&app)?.join("subjects"),
+        cfg!(debug_assertions),
+    )
+}
+
+fn list_question_banks_from_directories(
+    bundled: &Path,
+    user: &Path,
+    bundled_deletable: bool,
+) -> Result<Vec<QuestionBankEntry>, String> {
+    let mut banks = scan_question_banks(bundled, "/subjects", bundled_deletable)?;
+    banks.extend(scan_question_banks(user, "/user-subjects", true)?);
     banks.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(banks)
 }
 
-fn scan_question_banks(target: &Path, prefix: &str) -> Result<Vec<QuestionBankEntry>, String> {
+fn scan_question_banks(
+    target: &Path,
+    prefix: &str,
+    deletable: bool,
+) -> Result<Vec<QuestionBankEntry>, String> {
     if !target.exists() {
         return Ok(Vec::new());
     }
@@ -253,6 +291,7 @@ fn scan_question_banks(target: &Path, prefix: &str) -> Result<Vec<QuestionBankEn
         banks.push(QuestionBankEntry {
             name,
             file: format!("{prefix}/{file_name}"),
+            deletable,
         });
     }
 
@@ -262,8 +301,37 @@ fn scan_question_banks(target: &Path, prefix: &str) -> Result<Vec<QuestionBankEn
 
 #[tauri::command]
 fn read_question_bank(app: tauri::AppHandle, file: &str) -> Result<String, String> {
-    let directory = content_directory(&app, "subjects")?;
-    let file_name = file.strip_prefix("/subjects/").ok_or("不支持的题库路径")?;
+    read_question_bank_from_directories(
+        file,
+        &content_directory(&app, "subjects")?,
+        &user_content_root(&app)?.join("subjects"),
+    )
+}
+
+fn read_question_bank_from_directories(
+    file: &str,
+    bundled: &Path,
+    user: &Path,
+) -> Result<String, String> {
+    let (directory, file_name) = if let Some(name) = file.strip_prefix("/user-subjects/") {
+        (user, name)
+    } else if let Some(name) = file.strip_prefix("/subjects/") {
+        (bundled, name)
+    } else {
+        return Err("不支持的题库路径".to_string());
+    };
+    let target = resolve_question_bank_file(directory, file_name)?;
+    let content = fs::read_to_string(&target)
+        .map(|text| text.trim_start_matches('\u{feff}').to_owned())
+        .map_err(|error| format!("无法读取题库，请使用 UTF-8 编码保存：{error}"))?;
+    public_banks::inline_bank_images(
+        content,
+        directory.parent().ok_or("无法获取题库资源目录")?,
+        &target,
+    )
+}
+
+fn resolve_question_bank_file(directory: &Path, file_name: &str) -> Result<PathBuf, String> {
     if file_name.is_empty()
         || file_name.contains(['/', '\\', ':'])
         || file_name.eq_ignore_ascii_case("banks.json")
@@ -281,16 +349,40 @@ fn read_question_bank(app: tauri::AppHandle, file: &str) -> Result<String, Strin
         .canonicalize()
         .map_err(|error| format!("无法找到题库文件：{error}"))?;
     if target.parent() != Some(directory.as_path()) || !target.is_file() {
-        return Err("题库文件必须位于 public/subjects 目录内".to_string());
+        return Err("题库文件必须位于选定的 subjects 目录内".to_string());
     }
-    let content = fs::read_to_string(&target)
-        .map(|text| text.trim_start_matches('\u{feff}').to_owned())
-        .map_err(|error| format!("无法读取题库，请使用 UTF-8 编码保存：{error}"))?;
-    public_banks::inline_bank_images(
-        content,
-        directory.parent().ok_or("无法获取 public 目录")?,
-        &target,
+    Ok(target)
+}
+
+#[tauri::command]
+fn delete_question_bank(app: tauri::AppHandle, file: &str) -> Result<(), String> {
+    delete_question_bank_from_directories(
+        file,
+        &content_directory(&app, "subjects")?,
+        &user_content_root(&app)?.join("subjects"),
+        cfg!(debug_assertions),
     )
+}
+
+fn delete_question_bank_from_directories(
+    file: &str,
+    bundled: &Path,
+    user: &Path,
+    bundled_deletable: bool,
+) -> Result<(), String> {
+    let (directory, file_name) = if let Some(name) = file.strip_prefix("/user-subjects/") {
+        (user, name)
+    } else if let Some(name) = file.strip_prefix("/subjects/") {
+        if !bundled_deletable {
+            return Err("安装包资源目录中的题库为只读，不能删除".to_string());
+        }
+        (bundled, name)
+    } else {
+        return Err("不支持的题库路径".to_string());
+    };
+    let target = resolve_question_bank_file(directory, file_name)?;
+    // Delete only this JSON. Manually imported banks may share image resources.
+    fs::remove_file(&target).map_err(|error| format!("无法删除题库 {}：{error}", target.display()))
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -529,6 +621,7 @@ pub fn run() {
             list_question_banks,
             read_question_bank,
             save_question_bank,
+            delete_question_bank,
             read_llm_config,
             write_llm_config,
             open_llm_config_file,
@@ -543,4 +636,210 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod content_tests {
+    use super::*;
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let id = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let root =
+                std::env::temp_dir().join(format!("exam-content-{}-{id}", std::process::id()));
+            fs::create_dir_all(&root).unwrap();
+            Self(root)
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn payload(content: &str, image: &str) -> public_banks::BankPayload {
+        serde_json::from_value(serde_json::json!({
+            "name": "same-name",
+            "directory": "import-test",
+            "content": serde_json::json!([{
+                "type": "single",
+                "content": content,
+                "image": "/images/import-test/picture.png"
+            }]).to_string(),
+            "images": [{ "fileName": "picture.png", "data": image }]
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn bundled_and_user_banks_are_listed_and_read_with_their_own_images() {
+        let temp = TestDirectory::new();
+        let bundled = temp.0.join("installed-public");
+        let user = temp.0.join("user-data/content");
+        let original =
+            public_banks::save_bank(&bundled, "/subjects", payload("bundled", "AQ==")).unwrap();
+        let generated =
+            public_banks::save_bank(&user, "/user-subjects", payload("user", "Ag==")).unwrap();
+        assert_eq!(generated.file, "/user-subjects/same-name.json");
+        assert!(Path::new(&generated.location).starts_with(user.canonicalize().unwrap()));
+        let installed_before = fs::read(&original.location).unwrap();
+        // A second save must not overwrite either an installed bank or an existing user bank.
+        let second =
+            public_banks::save_bank(&user, "/user-subjects", payload("second", "Aw==")).unwrap();
+        assert_ne!(second.file, generated.file);
+        assert_eq!(fs::read(&original.location).unwrap(), installed_before);
+
+        let bundled = bundled.join("subjects");
+        let user = user.join("subjects");
+        let banks = list_question_banks_from_directories(&bundled, &user, false).unwrap();
+        assert_eq!(banks.len(), 3);
+        assert!(banks.iter().any(|entry| entry.file == original.file));
+        assert!(banks.iter().any(|entry| entry.file == generated.file));
+        let installed =
+            read_question_bank_from_directories(&original.file, &bundled, &user).unwrap();
+        let saved = read_question_bank_from_directories(&generated.file, &bundled, &user).unwrap();
+        assert!(installed.contains("bundled"));
+        assert!(installed.contains("data:image/png;base64,AQ=="));
+        assert!(saved.contains("user"));
+        assert!(saved.contains("data:image/png;base64,Ag=="));
+    }
+
+    #[test]
+    fn absent_user_directory_does_not_hide_bundled_banks() {
+        let temp = TestDirectory::new();
+        let root = temp.0.join("public");
+        public_banks::save_bank(&root, "/subjects", payload("bundled", "AQ==")).unwrap();
+        let banks = list_question_banks_from_directories(
+            &root.join("subjects"),
+            &temp.0.join("absent"),
+            false,
+        )
+        .unwrap();
+        assert_eq!(banks.len(), 1);
+    }
+
+    #[test]
+    fn user_json_and_ai_banks_are_deletable_but_installed_banks_are_read_only() {
+        let temp = TestDirectory::new();
+        let bundled = temp.0.join("installed-public");
+        let user = temp.0.join("user-content");
+        let installed =
+            public_banks::save_bank(&bundled, "/subjects", payload("bundled", "AQ==")).unwrap();
+        let generated =
+            public_banks::save_bank(&user, "/user-subjects", payload("ai", "Ag==")).unwrap();
+        let manual = user.join("subjects/manual.json");
+        fs::write(&manual, r#"[{"type":"single","content":"manual"}]"#).unwrap();
+        let bundled_subjects = bundled.join("subjects");
+        let user_subjects = user.join("subjects");
+        let banks =
+            list_question_banks_from_directories(&bundled_subjects, &user_subjects, false).unwrap();
+        assert_eq!(banks.len(), 3);
+        assert!(
+            !banks
+                .iter()
+                .find(|bank| bank.file == installed.file)
+                .unwrap()
+                .deletable
+        );
+        assert!(banks
+            .iter()
+            .filter(|bank| bank.file.starts_with("/user-subjects/"))
+            .all(|bank| bank.deletable));
+        assert!(delete_question_bank_from_directories(
+            &installed.file,
+            &bundled_subjects,
+            &user_subjects,
+            false
+        )
+        .is_err());
+        assert!(Path::new(&installed.location).is_file());
+        delete_question_bank_from_directories(
+            "/user-subjects/manual.json",
+            &bundled_subjects,
+            &user_subjects,
+            false,
+        )
+        .unwrap();
+        delete_question_bank_from_directories(
+            &generated.file,
+            &bundled_subjects,
+            &user_subjects,
+            false,
+        )
+        .unwrap();
+        assert!(!manual.exists());
+        assert!(!Path::new(&generated.location).exists());
+        assert!(user.join("images/same-name/picture.png").is_file());
+        let banks =
+            list_question_banks_from_directories(&bundled_subjects, &user_subjects, false).unwrap();
+        assert_eq!(banks.len(), 1);
+        assert_eq!(banks[0].file, installed.file);
+    }
+
+    #[test]
+    fn development_directory_json_can_be_deleted() {
+        let temp = TestDirectory::new();
+        let bank = public_banks::save_bank(&temp.0, "/subjects", payload("dev", "AQ==")).unwrap();
+        let subjects = temp.0.join("subjects");
+        let user = temp.0.join("absent");
+        assert!(list_question_banks_from_directories(&subjects, &user, true).unwrap()[0].deletable);
+        delete_question_bank_from_directories(&bank.file, &subjects, &user, true).unwrap();
+        assert!(!Path::new(&bank.location).exists());
+    }
+
+    #[test]
+    fn delete_rejects_traversal_reserved_files_and_non_json() {
+        let temp = TestDirectory::new();
+        let subjects = temp.0.join("subjects");
+        fs::create_dir(&subjects).unwrap();
+        fs::write(temp.0.join("secret.json"), "secret").unwrap();
+        fs::write(subjects.join("banks.json"), "[]").unwrap();
+        fs::write(subjects.join("config.txt"), "secret").unwrap();
+        for file in [
+            "/user-subjects/../secret.json",
+            "/subjects/../secret.json",
+            "/user-subjects/sub/bank.json",
+            "/user-subjects/sub\\bank.json",
+            "/user-subjects/C:secret.json",
+            "/user-subjects/banks.json",
+            "/user-subjects/config.txt",
+            "/user-subjects/",
+            "/other/bank.json",
+        ] {
+            assert!(
+                delete_question_bank_from_directories(file, &subjects, &subjects, true).is_err(),
+                "{file}"
+            );
+        }
+        assert!(temp.0.join("secret.json").is_file());
+        assert!(subjects.join("banks.json").is_file());
+        assert!(subjects.join("config.txt").is_file());
+    }
+
+    #[test]
+    fn bank_read_rejects_path_traversal_and_reserved_files() {
+        let temp = TestDirectory::new();
+        for file in [
+            "/user-subjects/../secret.json",
+            "/user-subjects/sub/bank.json",
+            "/user-subjects/sub\\bank.json",
+            "/user-subjects/banks.json",
+            "/user-subjects/key.txt",
+            "/user-subjects/",
+            "/other/bank.json",
+            "/subjects/../secret.json",
+            "/subjects/banks.json",
+        ] {
+            assert!(
+                read_question_bank_from_directories(file, &temp.0, &temp.0).is_err(),
+                "{file}"
+            );
+        }
+    }
 }

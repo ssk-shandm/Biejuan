@@ -70,7 +70,7 @@
                   <span class="section-label">本地内容</span>
                   <h3>题库资源</h3>
                   <p class="card-description">
-                    下方显示应用当前可用的题库。桌面端可将 UTF-8 JSON 文件放入题库目录，再点击刷新题库；合法文件会自动加入列表，无效文件会提示原因。本机转换题库存储在应用数据中，可在这里删除。
+                    下方显示应用当前可用的题库。桌面端可将 UTF-8 JSON 文件放入题库目录，再点击刷新题库；合法文件会自动加入列表，无效文件会提示原因。用户目录中的手动 JSON 和 AI 转换题库均可在这里删除，安装包资源目录中的题库保持只读。
                   </p>
                 </div>
               </div>
@@ -85,7 +85,7 @@
                   <span class="resource-icon" aria-hidden="true">▤</span>
                   <span class="resource-copy">
                     <strong>题库文件</strong>
-                    <small>打开 public/subjects</small>
+                    <small>打开可写题库目录</small>
                   </span>
                   <span class="resource-arrow" aria-hidden="true">›</span>
                 </button>
@@ -98,7 +98,7 @@
                   <span class="resource-icon" aria-hidden="true">▧</span>
                   <span class="resource-copy">
                     <strong>题库图库</strong>
-                    <small>打开 public/images</small>
+                    <small>打开可写图库目录</small>
                   </span>
                   <span class="resource-arrow" aria-hidden="true">›</span>
                 </button>

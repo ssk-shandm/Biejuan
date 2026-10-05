@@ -1,10 +1,13 @@
 import { invoke } from '@tauri-apps/api/core'
 import { usePlatform } from '../composables/usePlatform'
 import { normalizeQuestionBank } from '../utils/questionSchema'
+import { GENERATED_BANK_PREFIX, deleteGeneratedBanks } from './generatedBankStorage'
+import { PUBLIC_BANKS_CHANGED } from './publicBankWriter'
 
 export interface PublicBankEntry {
   name: string
   file: string
+  deletable?: boolean
 }
 
 export async function listPublicBanks(): Promise<PublicBankEntry[]> {
@@ -40,4 +43,33 @@ export async function readPublicBank(file: string, name = file) {
   const questions = normalizeQuestionBank(raw, name)
   if (questions.length === 0) throw new Error('题库中没有题目')
   return questions
+}
+
+/** File permissions come from the desktop backend; do not infer them from origin labels. */
+export function isBankDeletable(bank: PublicBankEntry): boolean {
+  return bank.file.startsWith(GENERATED_BANK_PREFIX) || bank.deletable === true
+}
+
+export async function deleteManagedBanks(banks: PublicBankEntry[]) {
+  const deleted: string[] = []
+  const errors: string[] = []
+  const seen = new Set<string>()
+  for (const bank of banks) {
+    if (seen.has(bank.file)) continue
+    seen.add(bank.file)
+    try {
+      if (!isBankDeletable(bank)) throw new Error('该题库为只读，不能删除')
+      if (bank.file.startsWith(GENERATED_BANK_PREFIX)) {
+        await deleteGeneratedBanks([bank.file], false)
+      } else {
+        if (!usePlatform().isDesktopTauri.value) throw new Error('当前环境不支持删除本地题库文件')
+        await invoke('delete_question_bank', { file: bank.file })
+      }
+      deleted.push(bank.file)
+    } catch (error) {
+      errors.push('「' + bank.name + '」：' + (error instanceof Error ? error.message : String(error)))
+    }
+  }
+  if (deleted.length) window.dispatchEvent(new CustomEvent(PUBLIC_BANKS_CHANGED))
+  return { deleted, errors }
 }

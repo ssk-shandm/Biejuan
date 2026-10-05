@@ -14,6 +14,8 @@ export interface BankEntry {
   file: string
   /** 是否为用户从外部导入的题库 */
   imported?: boolean
+  /** 桌面端扫描结果：是否允许从当前存储目录删除 JSON 文件 */
+  deletable?: boolean
 }
 
 export type AnswerSheetEntry = {

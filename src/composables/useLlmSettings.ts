@@ -23,6 +23,7 @@ export interface LlmRuntimeConfig {
     protocol: 'openai-compatible'
     baseUrl: string
     model: string
+    apiKey?: string
   }
   request: {
     temperature: number
@@ -101,6 +102,9 @@ function normalizeConfig(value: unknown): LlmRuntimeConfig {
   const privacyInput = input.privacy as Record<string, unknown> | undefined
   const baseUrl = String(providerInput?.baseUrl ?? '').trim()
   const model = String(providerInput?.model ?? '').trim()
+  if (providerInput?.apiKey !== undefined && typeof providerInput.apiKey !== 'string') {
+    throw new Error('LLM config.provider.apiKey 必须是字符串。')
+  }
   const temperature = Number(requestInput?.temperature)
   const maxOutputTokens = Number(requestInput?.maxOutputTokens)
   const timeoutMs = Number(requestInput?.timeoutMs)
@@ -119,7 +123,10 @@ function normalizeConfig(value: unknown): LlmRuntimeConfig {
   return {
     $schema: typeof input.$schema === 'string' ? input.$schema : defaultConfig().$schema,
     schemaVersion: 1,
-    provider: { protocol: 'openai-compatible', baseUrl, model },
+    provider: {
+      protocol: 'openai-compatible', baseUrl, model,
+      ...(providerInput?.apiKey !== undefined ? { apiKey: String(providerInput.apiKey).trim() } : {}),
+    },
     request: { temperature, maxOutputTokens, timeoutMs },
     ocr: {
       enabled: ocrInput?.enabled !== false,
@@ -145,6 +152,10 @@ function parseConfigText(text: string) {
 function applyConfig(config: LlmRuntimeConfig) {
   provider.baseUrl = config.provider.baseUrl
   provider.model = config.provider.model
+  provider.apiKey = isTauriRuntime()
+    ? config.provider.apiKey ?? sessionStorage.getItem(SESSION_KEY) ?? ''
+    : sessionStorage.getItem(SESSION_KEY) ?? ''
+  if (isTauriRuntime()) sessionStorage.removeItem(SESSION_KEY)
   provider.temperature = config.request.temperature
   provider.maxOutputTokens = config.request.maxOutputTokens
   provider.timeoutMs = config.request.timeoutMs
@@ -156,6 +167,8 @@ function captureConfig(): LlmRuntimeConfig {
   const current = configText.value ? parseConfigText(configText.value) : defaultConfig()
   current.provider.baseUrl = provider.baseUrl.trim()
   current.provider.model = provider.model.trim()
+  if (isTauriRuntime()) current.provider.apiKey = provider.apiKey.trim()
+  else delete current.provider.apiKey
   current.request = {
     temperature: Number(provider.temperature),
     maxOutputTokens: Number(provider.maxOutputTokens),
@@ -234,7 +247,6 @@ export async function loadLlmProviderSettings(force = false) {
       const payload = await readConfig()
       applyConfig(parseConfigText(payload.content))
       configLocation.value = payload.location
-      provider.apiKey = sessionStorage.getItem(SESSION_KEY) ?? provider.apiKey
       isConfigReady.value = true
     } finally {
       isConfigLoading.value = false
@@ -248,13 +260,16 @@ export async function saveLlmProviderSettings() {
   const config = captureConfig()
   const content = JSON.stringify(config, null, 2)
   configLocation.value = await writeConfig(content)
+  if (!isTauriRuntime()) {
+    if (provider.apiKey) sessionStorage.setItem(SESSION_KEY, provider.apiKey)
+    else sessionStorage.removeItem(SESSION_KEY)
+  }
   applyConfig(config)
-  if (provider.apiKey) sessionStorage.setItem(SESSION_KEY, provider.apiKey)
-  else sessionStorage.removeItem(SESSION_KEY)
 }
 
 export async function saveLlmConfigText(text: string) {
   const config = parseConfigText(text)
+  if (!isTauriRuntime()) delete config.provider.apiKey
   const content = JSON.stringify(config, null, 2)
   configLocation.value = await writeConfig(content)
   applyConfig(config)
@@ -268,9 +283,16 @@ export async function resetLlmRequestConfig() {
   await saveLlmConfigText(JSON.stringify(config, null, 2))
 }
 
-export function clearLlmApiKey() {
-  provider.apiKey = ''
-  if (typeof window !== 'undefined') sessionStorage.removeItem(SESSION_KEY)
+export async function clearLlmApiKey() {
+  if (isTauriRuntime()) {
+    if (!isConfigReady.value) await loadLlmProviderSettings()
+    const config = parseConfigText(configText.value)
+    config.provider.apiKey = ''
+    await saveLlmConfigText(JSON.stringify(config, null, 2))
+  } else {
+    provider.apiKey = ''
+    if (typeof window !== 'undefined') sessionStorage.removeItem(SESSION_KEY)
+  }
 }
 
 export function buildChatCompletionsEndpoint(baseUrl: string) {

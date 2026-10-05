@@ -58,7 +58,7 @@
         <label class='field'>
           <span>API 密钥</span>
           <div class='secret-input'>
-            <input v-model='provider.apiKey' class='secret-native-input' :type='apiKeyInputType' placeholder='仅在当前会话中保存' autocomplete='new-password' />
+            <input v-model='provider.apiKey' class='secret-native-input' :type='apiKeyInputType' :placeholder="isDesktopConfig ? '保存后重启仍可使用' : '仅在当前会话中保存'" autocomplete='new-password' />
             <button type='button' class='eye-btn' :aria-label="showApiKey ? '隐藏密钥' : '显示密钥'" @click='showApiKey = !showApiKey'>
               <svg v-if='showApiKey' viewBox='0 0 24 24' width='18' height='18' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>
                 <path d='M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z' />
@@ -70,13 +70,13 @@
               </svg>
             </button>
           </div>
-          <small>密钥仅保存在当前会话中，不会写入配置文件。</small>
+          <small>{{ isDesktopConfig ? '点击“保存连接”后，密钥将以明文写入本地配置文件，重启后自动读取。请勿分享该文件。' : '密钥仅保存在当前会话中，不会写入配置文件。' }}</small>
         </label>
       </div>
       <div class='actions'>
         <button class='primary-btn' type='button' :disabled='isSaving' @click='saveSettings'>{{ isSaving ? '保存中…' : '保存连接' }}</button>
         <button class='secondary-btn' type='button' :disabled='isTesting' @click='testConnection'>{{ isTesting ? '测试中…' : '测试连接' }}</button>
-        <button v-if='provider.apiKey' class='text-btn danger' type='button' @click='removeApiKey'>清除密钥</button>
+        <button v-if='provider.apiKey' class='text-btn danger' type='button' :disabled='isSaving' @click='removeApiKey'>清除密钥</button>
         <button v-if='isDesktopConfig' class='primary-btn' type='button' :disabled='isOpeningConfig' @click='openConfigFile'>{{ isOpeningConfig ? '打开中…' : '打开配置文件' }}</button>
         <button class='secondary-btn' type='button' :disabled='isConfigLoading' @click='reloadConfig'>{{ isConfigLoading ? '读取中…' : '重新读取配置文件' }}</button>
       </div>
@@ -180,10 +180,17 @@ async function openConfigFile() {
   }
 }
 
-function removeApiKey() {
-  clearLlmApiKey()
-  showApiKey.value = false
-  showMessage('当前会话的 API 密钥已清除。', 'success')
+async function removeApiKey() {
+  isSaving.value = true
+  try {
+    await clearLlmApiKey()
+    showApiKey.value = false
+    showMessage(isDesktopConfig.value ? '本地配置文件中的 API 密钥已清除。' : '当前会话的 API 密钥已清除。', 'success')
+  } catch (error) {
+    showMessage(error instanceof Error ? error.message : '清除密钥失败。', 'error')
+  } finally {
+    isSaving.value = false
+  }
 }
 
 function selectModel(id: string) {

@@ -1,6 +1,6 @@
 [package]
 name = "aaa"
-version = "0.1.4"
+version = "0.1.5"
 description = "别卷 - A quiz practice application"
 authors = ["ssk-shandm"]
 license = "MIT"

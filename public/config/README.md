@@ -31,7 +31,7 @@ public/config/
 2. **Vite 开发版**：通过开发中间件的 `GET/PUT /api/llm-config` 读写仓库根目录 `config/llm-config.json`。
 3. **Web 生产版**：降级保存到浏览器 `localStorage`，因为静态站点不能直接改写服务器文件。
 
-**不要把真实 API Key 写进任何 JSON 配置。** 当前 UI 只把 Key 保存到 `sessionStorage`，关闭桌面应用或浏览器标签页后失效。
+**桌面端密钥持久化**：点击“保存连接”会把 API Key 写入本地 `app_config_dir/llm-config.txt` 的 `provider.apiKey` 字段，重启后自动读取。该字段可选，旧版配置仍可使用；点击“清除密钥”会同时清除文件中的密钥。密钥以明文保存，请勿分享配置文件，也不要将真实密钥填写到公开示例或提交到仓库。网页端仍使用 `sessionStorage`，关闭标签页后失效。
 
 ## 内置文档转换流程
 

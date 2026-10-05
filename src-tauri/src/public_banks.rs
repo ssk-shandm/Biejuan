@@ -73,7 +73,7 @@ fn checked_directory(root: &Path, child: &str) -> Result<PathBuf, String> {
         .canonicalize()
         .map_err(|error| error.to_string())?;
     if directory.parent() != Some(root) {
-        return Err("题库目录不能指向 public 以外的位置".to_string());
+        return Err("题库目录不能指向资源根目录以外的位置".to_string());
     }
     Ok(directory)
 }
@@ -141,7 +141,7 @@ pub fn save_bank(
         }
         images.push((image.file_name.clone(), bytes));
     }
-    fs::create_dir_all(root).map_err(|error| format!("无法创建 public 目录：{error}"))?;
+    fs::create_dir_all(root).map_err(|error| format!("无法创建题库资源目录：{error}"))?;
     let root = root.canonicalize().map_err(|error| error.to_string())?;
     let subjects = checked_directory(&root, "subjects")?;
     let images_root = checked_directory(&root, "images")?;
@@ -196,7 +196,7 @@ pub fn inline_bank_images(mut content: String, root: &Path, bank: &Path) -> Resu
         .canonicalize()
         .map_err(|error| error.to_string())?;
     if directory.parent() != Some(images_root.as_path()) {
-        return Err("图片目录不能指向 public/images 以外的位置".to_string());
+        return Err("图片目录不能指向当前资源根目录的 images 以外的位置".to_string());
     }
     for entry in fs::read_dir(&directory).map_err(|error| error.to_string())? {
         let path = entry.map_err(|error| error.to_string())?.path();

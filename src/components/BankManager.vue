@@ -3,15 +3,15 @@
     <div class="bank-manager-heading">
       <div>
         <h4>当前题库（{{ banks.length }}）</h4>
-        <p>勾选要删除的本机转换题库。安装包自带及外部文件题库为只读，不能在这里删除。</p>
+        <p>用户题库目录中的手动 JSON、AI 转换和导入题库均可删除；安装包资源目录中的题库保持只读。删除会移除 JSON 和关联练习记录，不删除可能共享的图片。</p>
       </div>
     </div>
     <p v-if="!banks.length" class="bank-manager-empty">暂无题库。</p>
     <div v-else class="bank-manager-list">
-      <label v-for="bank in banks" :key="bank.file" class="bank-manager-row" :class="{ disabled: !isDeletable(bank.file) }">
-        <input v-model="selected" type="checkbox" :value="bank.file" :disabled="deleting || !isDeletable(bank.file)" />
+      <label v-for="bank in banks" :key="bank.file" class="bank-manager-row" :class="{ disabled: !isBankDeletable(bank) }">
+        <input v-model="selected" type="checkbox" :value="bank.file" :disabled="deleting || !isBankDeletable(bank)" />
         <span class="bank-manager-name">{{ bank.name }} <small v-if="bank.file === selectedBank">当前选中</small></span>
-        <span class="bank-manager-kind">{{ isDeletable(bank.file) ? '本机转换' : '只读' }}</span>
+        <span class="bank-manager-kind">{{ isBankDeletable(bank) ? '本地题库' : '只读' }}</span>
       </label>
     </div>
     <div class="bank-manager-footer">
@@ -27,7 +27,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import type { BankEntry } from '../composables/useQuiz'
-import { GENERATED_BANK_PREFIX, deleteGeneratedBanks } from '../services/generatedBankStorage'
+import { deleteManagedBanks, isBankDeletable } from '../services/publicBankStorage'
 import { showConfirm } from '../composables/useToast'
 import { useQuizStore } from '../stores/quizStore'
 
@@ -37,16 +37,15 @@ const selected = ref<string[]>([])
 const deleting = ref(false)
 const message = ref('')
 const failed = ref(false)
-const isDeletable = (file: string) => file.startsWith(GENERATED_BANK_PREFIX)
 
 watch(() => props.banks, banks => {
-  const available = new Set(banks.filter(bank => isDeletable(bank.file)).map(bank => bank.file))
+  const available = new Set(banks.filter(isBankDeletable).map(bank => bank.file))
   selected.value = selected.value.filter(file => available.has(file))
 })
 
 async function removeSelected() {
   if (deleting.value || !selected.value.length) return
-  const files = selected.value.filter(file => props.banks.some(bank => bank.file === file && isDeletable(file)))
+  const files = selected.value.filter(file => props.banks.some(bank => bank.file === file && isBankDeletable(bank)))
   if (!files.length) return
   const fileSet = new Set(files)
   const notebooks = store.notebooks.filter(notebook => fileSet.has(notebook.bankFile)).length
@@ -56,17 +55,20 @@ async function removeSelected() {
   deleting.value = true
   message.value = ''
   try {
-    await deleteGeneratedBanks(files)
-    await store.removeBanksData(files)
-    for (const file of files) {
+    const result = await deleteManagedBanks(props.banks.filter(bank => fileSet.has(bank.file)))
+    if (result.deleted.length) await store.removeBanksData(result.deleted)
+    for (const file of result.deleted) {
       for (const key of [`practice_session_${file}`, `wrong_session_${file}`, `practice_shuffle_pref_${file}`]) localStorage.removeItem(key)
       for (const key of Object.keys(localStorage)) {
         if (key.startsWith(`specialize_session_${file}_`)) localStorage.removeItem(key)
       }
     }
-    selected.value = []
-    failed.value = false
-    message.value = `已删除 ${files.length} 个题库及其关联错题记录。`
+    selected.value = selected.value.filter(file => !result.deleted.includes(file))
+    failed.value = result.errors.length > 0
+    message.value = [
+      result.deleted.length ? `已删除 ${result.deleted.length} 个题库及其关联错题记录。` : '',
+      ...result.errors,
+    ].filter(Boolean).join('\n')
   } catch (error) {
     failed.value = true
     message.value = error instanceof Error ? error.message : '删除题库失败，请重试。'

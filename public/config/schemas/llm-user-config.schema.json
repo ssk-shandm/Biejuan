@@ -27,6 +27,10 @@
         },
         "model": {
           "type": "string"
+        },
+        "apiKey": {
+          "type": "string",
+          "description": "桌面端本地配置中的 API 密钥（明文）。不要在公开示例或仓库中填写真实密钥。"
         }
       }
     },
