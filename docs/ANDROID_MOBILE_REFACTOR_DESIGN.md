@@ -8,9 +8,11 @@
 
 > **实现状态（2026 年 9 月 27 日）**：阶段 1–6 的主要移动端代码已完成，阶段 7 已建立统一文件读取服务与应用私有目录适配；Windows 桌面端已完成构建验证。阶段 8 的 Android Gradle/APK 构建与真机验证仍受本机 Android 依赖缓存和设备环境影响，尚未宣称完成。
 
-当前验证记录：`npm run type-check`、`npm run build`、`npm run config:check`、定向 ESLint、`cargo fmt -- --check`、`cargo check` 和 `npm run tauri:build` 均通过。Android `assembleDebug` 已进入 Gradle 构建，但因本机 Java TLS 证书链无法从 Maven Central/GitHub 下载 `kotlin-compiler-embeddable:2.0.21` 而失败；这属于构建环境依赖问题，尚未进行真机测试。
+当前验证记录：`npm run type-check`、`npm run build`、`npm run config:check`、定向 ESLint、`cargo fmt -- --check`、`cargo check` 和 `npm run tauri:build -- --bundles nsis -- --bundles nsis` 均通过。Android `assembleDebug` 已进入 Gradle 构建，但因本机 Java TLS 证书链无法从 Maven Central/GitHub 下载 `kotlin-compiler-embeddable:2.0.21` 而失败；这属于构建环境依赖问题，尚未进行真机测试。
 
 > **2026-09-28 补充验证**：此前 Android 依赖问题已解决；Android arm64 调试 APK 构建通过，Windows v0.1.2 NSIS 安装包构建通过。原文为阶段性记录，后续发布与签名流程以 [打包指南](TAURI_GUIDE.md) 为准；不将本次构建等同于全部机型的真机验收。
+
+> 文档性质：这是 Android 移动端重构的历史设计与实施记录；当前版本和发布门槛以 [ROADMAP_0.2_TO_1.0.md](ROADMAP_0.2_TO_1.0.md) 与 [TAURI_GUIDE.md](TAURI_GUIDE.md) 为准。
 
 ---
 
@@ -824,7 +826,7 @@ src/composables/useAndroidBackButton.ts
 npm run config:check
 npm run type-check
 npm run build
-npm run tauri:build
+npm run tauri:build -- --bundles nsis
 ```
 
 ### 阶段 1：平台与布局基础设施

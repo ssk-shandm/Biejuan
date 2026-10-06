@@ -1032,6 +1032,7 @@ export function useQuiz() {
   onMounted(async () => {
     window.addEventListener(PUBLIC_BANKS_CHANGED, handlePublicBankChange)
     window.addEventListener(GENERATED_BANKS_CHANGED, handleGeneratedBankChange)
+    await quizStore.persistedDataReady
     await refreshBanks()
     window.addEventListener('popstate', handlePopState)
   })

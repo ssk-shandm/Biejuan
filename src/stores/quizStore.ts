@@ -1,9 +1,10 @@
-import { ref, watch } from 'vue'
+import { ref, watch, nextTick, onScopeDispose } from 'vue'
 import { defineStore } from 'pinia'
 import type { Question, WrongQuestionEntry, WrongNotebook } from '../types'
 import { showToast } from '../composables/useToast'
 import { normalizeQuestionBank } from '../utils/questionSchema'
 import { saveExportBlob } from '../services/fileService'
+import { parseQuizNotebookData, validateQuizNotebookData, type QuizNotebookData } from '../utils/quizData'
 
 const WRONG_ENTRIES_KEY = 'wrongEntriesDB'
 const NOTEBOOKS_KEY = 'wrongNotebooksDB'
@@ -31,124 +32,93 @@ async function initTauriStorage() {
     tauriWriteAvailable = true
   } catch (e) {
     console.warn('[quizStore] Tauri 存储初始化失败，使用 localStorage 作为后备:', e)
+    showToast('本地文件存储不可用，当前使用浏览器存储。请及时备份错题本。')
   }
 }
 
 async function readTauriFile(filename: string): Promise<string | null> {
   if (!tauriDataDir || !tauriWriteAvailable) return null
-  try {
-    const { exists, readTextFile } = await import('@tauri-apps/plugin-fs')
-    const { join } = await import('@tauri-apps/api/path')
-    const path = await join(tauriDataDir, filename)
-    if (!(await exists(path))) return null
-    return await readTextFile(path)
-  } catch {
-    return null
-  }
+  const { exists, readTextFile } = await import('@tauri-apps/plugin-fs')
+  const { join } = await import('@tauri-apps/api/path')
+  const path = await join(tauriDataDir, filename)
+  if (!(await exists(path))) return null
+  return readTextFile(path)
 }
 
 async function writeTauriFile(filename: string, content: string): Promise<void> {
   if (!tauriDataDir || !tauriWriteAvailable) return
-  try {
-    const { writeTextFile } = await import('@tauri-apps/plugin-fs')
-    const { join } = await import('@tauri-apps/api/path')
-    const path = await join(tauriDataDir, filename)
-    await writeTextFile(path, content)
-  } catch (e) {
-    console.warn('[quizStore] Tauri 写入失败:', e)
-  }
+  const { writeTextFile } = await import('@tauri-apps/plugin-fs')
+  const { join } = await import('@tauri-apps/api/path')
+  await writeTextFile(await join(tauriDataDir, filename), content)
 }
 
 const tauriStorageReady = initTauriStorage()
 
 // ── 从旧版 localStorage 迁移 ──
 function migrateOldStorage() {
-  // 清理旧版 wrong_session_* 数据
-  const keysToRemove: string[] = []
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i)
-    if (key && key.startsWith('wrong_session_')) {
-      keysToRemove.push(key)
-    }
-  }
-  keysToRemove.forEach((k) => localStorage.removeItem(k))
-
-  // 迁移旧版 wrongQuestionsDB (number[]) → wrongEntriesDB (WrongQuestionEntry[])
+  // 已有合并文档时不再触碰遗留键；迁移只提交一个 localStorage 文档。
+  if (localStorage.getItem(COMBINED_LOCAL_KEY) !== null) return
   const oldWrongKey = 'wrongQuestionsDB'
   const oldData = localStorage.getItem(oldWrongKey)
-  if (oldData) {
-    try {
-      const oldNumbers: number[] = JSON.parse(oldData)
-      if (Array.isArray(oldNumbers) && oldNumbers.length > 0) {
-        const entries: WrongQuestionEntry[] = oldNumbers.map((num, i) => ({
-          id: Date.now() + i,
-          questionNumber: num,
-          bankFile: '',
-          addedAt: Date.now() + i,
-        }))
-        const existing: WrongQuestionEntry[] = JSON.parse(localStorage.getItem(WRONG_ENTRIES_KEY) || '[]')
-        localStorage.setItem(WRONG_ENTRIES_KEY, JSON.stringify([...existing, ...entries]))
-      }
-    } catch { /* 忽略 */ }
-    localStorage.removeItem(oldWrongKey)
-  }
+  const rawEntries = localStorage.getItem(WRONG_ENTRIES_KEY)
+  const rawNotebooks = localStorage.getItem(NOTEBOOKS_KEY)
+  const rawGuessed = localStorage.getItem(GUESSED_KEY)
+  const rawActive = localStorage.getItem(ACTIVE_NOTEBOOK_KEY)
+  if ([oldData, rawEntries, rawNotebooks, rawGuessed, rawActive].every(raw => raw === null)) return
 
-  // 旧版 guessedRightDB 是 number[]，新版是 {questionNumber, bankFile}[]
-  const oldGuessed = localStorage.getItem(GUESSED_KEY)
-  if (oldGuessed) {
-    try {
-      const parsed = JSON.parse(oldGuessed)
-      if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'number') {
-        const migrated = parsed.map((num: number) => ({ questionNumber: num, bankFile: '' }))
-        localStorage.setItem(GUESSED_KEY, JSON.stringify(migrated))
-      }
-    } catch { /* 忽略 */ }
-  }
-
-  // ── 迁移旧版 flat wrongEntriesDB → 笔记本结构 ──
-  // 如果已有 notebook 数据则跳过
-  if (!localStorage.getItem(NOTEBOOKS_KEY)) {
-    const raw = localStorage.getItem(WRONG_ENTRIES_KEY)
-    if (raw) {
-      try {
-        const entries: WrongQuestionEntry[] = JSON.parse(raw)
-        if (Array.isArray(entries) && entries.length > 0) {
-          // 按 bankFile 分组
-          const groups = new Map<string, WrongQuestionEntry[]>()
-          for (const e of entries) {
-            const bf = e.bankFile || '(未知题库)'
-            if (!groups.has(bf)) groups.set(bf, [])
-            groups.get(bf)!.push(e)
-          }
-          // 每组创建一个默认笔记本
-          const notebooks: WrongNotebook[] = []
-          const allEntries: WrongQuestionEntry[] = []
-          for (const [bf, groupEntries] of groups) {
-            const nbId = 'nb_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)
-            notebooks.push({
-              id: nbId,
-              name: bf + ' 错题本',
-              bankFile: bf,
-              createdAt: Date.now(),
-            })
-            for (const e of groupEntries) {
-              e.notebookId = nbId
-              allEntries.push(e)
-            }
-          }
-          localStorage.setItem(NOTEBOOKS_KEY, JSON.stringify(notebooks))
-          localStorage.setItem(WRONG_ENTRIES_KEY, JSON.stringify(allEntries))
-        }
-      } catch { /* 忽略 */ }
+  const entries: WrongQuestionEntry[] = JSON.parse(rawEntries || '[]')
+  if (!Array.isArray(entries)) throw new Error('旧版错题记录不是数组')
+  if (oldData !== null) {
+    const numbers: unknown = JSON.parse(oldData)
+    if (!Array.isArray(numbers) || numbers.some(number => !Number.isSafeInteger(number) || number <= 0)) {
+      throw new Error('旧版错题题号格式错误')
+    }
+    let id = entries.reduce((max, entry) => Math.max(max, entry.id), Date.now()) + 1
+    for (const questionNumber of numbers) {
+      entries.push({ id: id++, questionNumber, bankFile: '', addedAt: Date.now() })
     }
   }
+
+  const notebooks: WrongNotebook[] = JSON.parse(rawNotebooks || '[]')
+  if (!Array.isArray(notebooks)) throw new Error('旧版错题本不是数组')
+  // 给没有 notebookId 的历史条目补上默认本；保持真实 bankFile，未知来源仅用于显示名称。
+  for (const entry of entries) {
+    if (entry.notebookId) continue
+    let notebook = notebooks.find(item => item.bankFile === entry.bankFile)
+    if (!notebook) {
+      notebook = {
+        id: 'nb_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+        name: (entry.bankFile || '(未知题库)') + ' 错题本',
+        bankFile: entry.bankFile,
+        createdAt: Date.now(),
+      }
+      notebooks.push(notebook)
+    }
+    entry.notebookId = notebook.id
+  }
+
+  const guessed: unknown = JSON.parse(rawGuessed || '[]')
+  const data = validateQuizNotebookData({
+    version: 1,
+    notebooks,
+    wrongEntries: entries,
+    activeNotebookByBank: JSON.parse(rawActive || '{}'),
+    guessedRight: Array.isArray(guessed)
+      ? guessed.map(item => typeof item === 'number' ? { questionNumber: item, bankFile: '' } : item)
+      : guessed,
+  })
+  localStorage.setItem(COMBINED_LOCAL_KEY, JSON.stringify({ ...data, savedAt: Date.now() }))
+  // 必须在目标校验、写入均成功之后移除旧题号；其他遗留键保留供排错。
+  if (oldData !== null) localStorage.removeItem(oldWrongKey)
 }
 
+let legacyMigrationFailed = false
 try {
   migrateOldStorage()
 } catch (err) {
+  legacyMigrationFailed = true
   console.warn('本地数据迁移失败，原有数据已保留:', err)
-  // 不再清空数据 — 保留用户已有的错题数据
+  showToast('旧版错题迁移失败，原始数据已保留。请先备份原始数据后重试。')
 }
 
 
@@ -159,89 +129,147 @@ function genNotebookId(): string {
 }
 
 export const useQuizStore = defineStore('quiz', () => {
-  // ── 加载初始数据：浏览器使用 localStorage，桌面端随后用 appData 单文件覆盖 ──
-  let initialNotebooks: WrongNotebook[] = []
-  let initialEntries: WrongQuestionEntry[] = []
-  let initialActive: Record<string, string> = {}
-  let initialGuessed: { questionNumber: number; bankFile: string }[] = []
+  let initial: QuizNotebookData = {
+    version: 1, notebooks: [], wrongEntries: [], activeNotebookByBank: {}, guessedRight: [],
+  }
+  let browserWritesBlocked = legacyMigrationFailed
+  let nativeWritesBlocked = false
+  let hydrating = true
+  let dirty = false
 
-  // 浏览器只读取一个合并文档；没有时再兼容旧版分散键。
   try {
-    const combined = JSON.parse(localStorage.getItem(COMBINED_LOCAL_KEY) || 'null')
-    if (combined && Array.isArray(combined.notebooks) && Array.isArray(combined.wrongEntries)) {
-      initialNotebooks = combined.notebooks
-      initialEntries = combined.wrongEntries
-      initialActive = combined.activeNotebookByBank || {}
-      initialGuessed = combined.guessedRight || []
-    } else {
-      initialNotebooks = JSON.parse(localStorage.getItem(NOTEBOOKS_KEY) || '[]')
-      initialEntries = JSON.parse(localStorage.getItem(WRONG_ENTRIES_KEY) || '[]')
-      initialActive = JSON.parse(localStorage.getItem(ACTIVE_NOTEBOOK_KEY) || '{}')
-      initialGuessed = JSON.parse(localStorage.getItem(GUESSED_KEY) || '[]')
-    }
-  } catch {
-    initialNotebooks = []
-    initialEntries = []
-    initialActive = {}
-    initialGuessed = []
+    const combined = localStorage.getItem(COMBINED_LOCAL_KEY)
+    if (combined !== null) initial = parseQuizNotebookData(combined)
+  } catch (error) {
+    browserWritesBlocked = true
+    console.warn('[quizStore] 浏览器错题数据读取失败，保留原文:', error)
+    showToast('浏览器错题数据损坏或无法读取，原始数据未覆盖。请先备份原始数据，再恢复有效的错题本备份。')
   }
 
-  // 以上述为后备值创建 ref
-  const notebooks = ref<WrongNotebook[]>(initialNotebooks)
-  const wrongEntries = ref<WrongQuestionEntry[]>(initialEntries)
-  const activeNotebookByBank = ref<Record<string, string>>(initialActive)
-  const guessedRightBank = ref<{ questionNumber: number; bankFile: string }[]>(initialGuessed)
+  // 浏览器原件不可读且原生文件缺失时，也不能生成空的原生文件掩盖损坏数据。
+  nativeWritesBlocked = browserWritesBlocked
 
-  // ── 桌面端异步加载单文件数据；浏览器已同步读取 localStorage ──
-  async function loadPersistedData() {
-    await tauriStorageReady
-    // 桌面版优先从 appDataDir 的单文件读取。
-    const tauriRaw = await readTauriFile(COMBINED_FILE)
-    if (tauriRaw) {
-      try {
-        const data = JSON.parse(tauriRaw)
-        if (data && Array.isArray(data.notebooks) && Array.isArray(data.wrongEntries)) {
-          notebooks.value = data.notebooks
-          wrongEntries.value = data.wrongEntries
-          activeNotebookByBank.value = data.activeNotebookByBank || {}
-          guessedRightBank.value = data.guessedRight || []
-          const maxId = data.wrongEntries.reduce((m: number, e: { id: number }) => Math.max(m, e.id), 0)
-          nextId = Math.max(nextId, maxId + 1)
-          console.log('[quizStore] 已从 Tauri 文件加载错题本数据')
-          return
-        }
-      } catch (e) { console.warn('[quizStore] Tauri 数据解析失败:', e) }
-    }
+  const notebooks = ref<WrongNotebook[]>(initial.notebooks)
+  const wrongEntries = ref<WrongQuestionEntry[]>(initial.wrongEntries)
+  const activeNotebookByBank = ref<Record<string, string>>(initial.activeNotebookByBank)
+  const guessedRightBank = ref<QuizNotebookData['guessedRight']>(initial.guessedRight)
 
+  let lastSavedAt = initial.savedAt ?? 0
+  function applyData(data: QuizNotebookData) {
+    lastSavedAt = Math.max(lastSavedAt, data.savedAt ?? 0)
+    notebooks.value = data.notebooks
+    wrongEntries.value = data.wrongEntries
+    activeNotebookByBank.value = data.activeNotebookByBank
+    guessedRightBank.value = data.guessedRight
+    const maxId = data.wrongEntries.reduce((max, entry) => Math.max(max, entry.id), 0)
+    nextId = Math.max(nextId, maxId + 1)
   }
-  const persistedDataReady = loadPersistedData()
+  applyData(initial)
 
-  // ── 合并持久化：浏览器 localStorage + 桌面 appData 单文件 ──
-  function saveCombinedData() {
-    const data = {
+  function serializeData() {
+    lastSavedAt = Math.max(Date.now(), lastSavedAt + 1)
+    return JSON.stringify({
       version: 1,
-      savedAt: Date.now(),
+      savedAt: lastSavedAt,
       notebooks: notebooks.value,
       wrongEntries: wrongEntries.value,
       activeNotebookByBank: activeNotebookByBank.value,
       guessedRight: guessedRightBank.value,
+    })
+  }
+
+  function cacheBrowserData(json: string) {
+    if (browserWritesBlocked) return
+    try {
+      localStorage.setItem(COMBINED_LOCAL_KEY, json)
+    } catch (error) {
+      console.warn('[quizStore] 浏览器写入失败:', error)
+      showToast('错题本保存失败：浏览器存储不可用或空间不足。请及时导出备份并重试。')
     }
-    const json = JSON.stringify(data)
-    localStorage.setItem(COMBINED_LOCAL_KEY, json)
-    return tauriStorageReady.then(() => writeTauriFile(COMBINED_FILE, json))
   }
 
-  // 所有数据变化共享一个防抖 watch
+  async function loadPersistedData() {
+    await tauriStorageReady
+    let recoverBrowserCopy = false
+    try {
+      const raw = await readTauriFile(COMBINED_FILE)
+      if (raw !== null) {
+        const native = parseQuizNotebookData(raw)
+        nativeWritesBlocked = false
+        // 上次退出时原生写入可能没完成；仅在两端均有时间戳时采用更新的浏览器副本。
+        if (initial.savedAt !== undefined && native.savedAt !== undefined && initial.savedAt > native.savedAt) {
+          recoverBrowserCopy = true
+        } else {
+          applyData(native)
+          browserWritesBlocked = false
+          cacheBrowserData(JSON.stringify(native))
+        }
+      } else if (!browserWritesBlocked && initial.savedAt !== undefined) {
+        recoverBrowserCopy = true
+      }
+    } catch (error) {
+      // 不能把损坏/无权限的文件当成「不存在」，否则下一次操作会覆盖原件。
+      nativeWritesBlocked = true
+      console.warn('[quizStore] 本地错题文件读取失败，禁止自动覆盖:', error)
+      showToast('本地错题文件损坏或无法读取，原始文件未覆盖。当前使用浏览器副本，请先备份原始文件，再恢复有效的错题本备份。')
+    } finally {
+      await nextTick()
+      hydrating = false
+      if (recoverBrowserCopy) scheduleSave()
+    }
+  }
+  const persistedDataReady = loadPersistedData()
+
+  // 原生写入串行执行，失败后队列仍可接受后续重试，避免旧快照晚完成覆盖新数据。
+  let writeQueue: Promise<void> = Promise.resolve()
+  function queueNativeWrite(json: string): Promise<void> {
+    if (nativeWritesBlocked) return Promise.resolve()
+    const write = writeQueue.then(() => writeTauriFile(COMBINED_FILE, json))
+    writeQueue = write.catch(error => {
+      console.warn('[quizStore] 本地文件写入失败:', error)
+      showToast('错题本保存失败：本地文件写入失败。浏览器副本仍可用时可导出备份，请检查权限和磁盘空间后重试。')
+    })
+    return write
+  }
+
   let saveTimer: ReturnType<typeof setTimeout> | null = null
+  function saveCombinedData(): Promise<void> {
+    const json = serializeData()
+    cacheBrowserData(json)
+    dirty = false
+    return queueNativeWrite(json)
+  }
   function scheduleSave() {
+    if (hydrating) return
+    dirty = true
+    // 浏览器副本不等待原生防抖定时器，刷新/关闭前尽早保存。
+    cacheBrowserData(serializeData())
     if (saveTimer) clearTimeout(saveTimer)
-    saveTimer = setTimeout(() => { saveCombinedData(); saveTimer = null }, 200)
+    saveTimer = setTimeout(() => {
+      saveTimer = null
+      void saveCombinedData().catch(() => { /* queueNativeWrite 已提示失败 */ })
+    }, 200)
   }
 
-  watch([notebooks, wrongEntries, activeNotebookByBank, guessedRightBank],
-    () => { scheduleSave() },
-    { deep: true },
-  )
+  watch([notebooks, wrongEntries, activeNotebookByBank, guessedRightBank], scheduleSave, { deep: true })
+
+  function flushPendingSave() {
+    if (hydrating) return
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+    // pagehide 可早于 Vue 的 watch 微任务，直接捕获最新的 ref 值。
+    void saveCombinedData().catch(() => { /* queueNativeWrite 已提示失败 */ })
+  }
+  function handleVisibilityChange() {
+    if (document.visibilityState === 'hidden') flushPendingSave()
+  }
+  window.addEventListener('pagehide', flushPendingSave)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+  onScopeDispose(() => {
+    window.removeEventListener('pagehide', flushPendingSave)
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
+    if (dirty) flushPendingSave()
+    if (saveTimer) clearTimeout(saveTimer)
+  })
 
   // ── 笔记本操作 ──
 
@@ -567,35 +595,17 @@ export const useQuizStore = defineStore('quiz', () => {
 
   /** 从 JSON 字符串恢复全部错题本数据（会覆盖当前数据） */
   function importAllDataFromJson(jsonStr: string): { success: boolean; message: string } {
+    if (hydrating) return { success: false, message: '正在加载本地错题本，请稍后再恢复' }
     try {
-      const data = JSON.parse(jsonStr)
-      if (!data || typeof data !== 'object') {
-        return { success: false, message: '无效的备份文件格式' }
-      }
-      if (data.version !== 1) {
-        return { success: false, message: '不支持的备份版本，请检查文件' }
-      }
-      if (!Array.isArray(data.notebooks)) {
-        return { success: false, message: '备份文件中缺少 notebooks 数据' }
-      }
-      if (!Array.isArray(data.wrongEntries)) {
-        return { success: false, message: '备份文件中缺少 wrongEntries 数据' }
-      }
-
-      notebooks.value = data.notebooks
-      wrongEntries.value = data.wrongEntries
-      activeNotebookByBank.value = data.activeNotebookByBank || {}
-      guessedRightBank.value = data.guessedRight || []
-
-      // 更新 nextId 避免与恢复的条目 ID 冲突
-      const maxId = data.wrongEntries.reduce((m: number, e: { id: number }) => Math.max(m, e.id), 0)
-      nextId = Math.max(nextId, maxId + 1)
-
-      const nbCount = data.notebooks.length
-      const entryCount = data.wrongEntries.length
-      return { success: true, message: `成功恢复 ${nbCount} 个错题本，共 ${entryCount} 条错题记录！` }
-    } catch (e) {
-      return { success: false, message: `解析备份文件失败: ${e instanceof Error ? e.message : '未知错误'}` }
+      const data = parseQuizNotebookData(jsonStr)
+      // 先写浏览器副本；校验/配额失败都不改变当前内存数据。
+      localStorage.setItem(COMBINED_LOCAL_KEY, JSON.stringify({ ...data, savedAt: Date.now() }))
+      browserWritesBlocked = false
+      nativeWritesBlocked = false
+      applyData(data)
+      return { success: true, message: '成功恢复 ' + data.notebooks.length + ' 个错题本，共 ' + data.wrongEntries.length + ' 条错题记录！' }
+    } catch (error) {
+      return { success: false, message: '恢复错题本失败，当前数据未改变：' + (error instanceof Error ? error.message : '未知错误') }
     }
   }
 
@@ -635,6 +645,7 @@ export const useQuizStore = defineStore('quiz', () => {
     importToNewNotebook,
     importToNotebook,
     // 备份与恢复
+    persistedDataReady,
     exportAllDataAsJson,
     importAllDataFromJson,
     getBackupEntryCount,

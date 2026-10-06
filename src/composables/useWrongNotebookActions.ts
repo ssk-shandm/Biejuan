@@ -25,6 +25,7 @@ export function useWrongNotebookActions(
   }
 
   async function handleBackupAll() {
+    await quizStore.persistedDataReady
     const json = quizStore.exportAllDataAsJson()
     const dateStr = new Date().toISOString().slice(0, 10)
     try {
@@ -53,6 +54,7 @@ export function useWrongNotebookActions(
       return
     }
     try {
+      await quizStore.persistedDataReady
       const result = quizStore.importAllDataFromJson(await readImportedText(file))
       showToast(result.message)
     } catch (error) {

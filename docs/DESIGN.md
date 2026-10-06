@@ -53,10 +53,11 @@ Web 版以静态站点方式运行。题库和图片由部署站点的 `subjects
 
 桌面版使用 Tauri 2：
 
-- 开发环境打开项目中的 `public/subjects` 和 `public/images`；
-- 打包时将以上目录复制到安装资源目录的 `public/subjects` 和 `public/images`；
-- 设置页通过 Rust 命令调用系统文件管理器：开发版打开源码 `public`，安装版打开安装资源中的 `public`；
-- 内置资源随应用版本发布，修改后需要重新构建应用才能形成正式版本。
+- 开发环境的内置资源位于 `public/subjects/` 和 `public/images/`；
+- 正式构建由 `scripts/prepare-public-build.mjs` 清理私人题库、图片和错题数据，只把脱敏资源放入安装包；
+- 安装版用户资源位于 `%LOCALAPPDATA%/com.exam.assistant/content/subjects/` 和 `%LOCALAPPDATA%/com.exam.assistant/content/images/`；
+- 设置页按钮在 Tauri 开发版打开项目 `public` 子目录，在安装版打开用户 `content` 子目录；
+- 安装目录中的内置资源只读。用户手动放置、应用导入和 AI 转换生成的资源必须写入用户目录。
 
 ## 4. 总体架构
 
@@ -161,7 +162,7 @@ public/
 
 ### 6.2 题库清单
 
-`scripts/generate-banks.mjs` 扫描 `public/subjects/*.json`，排除 `banks.json` 后生成题库清单。开发和构建流程通过 `predev`、`prebuild` 自动执行该脚本。
+开发环境中，`scripts/generate-banks.mjs` 扫描 `public/subjects/` 下的 UTF-8 JSON，排除 `banks.json` 后生成题库清单。开发和构建流程通过 `predev`、`prebuild` 自动执行该脚本；正式构建前由 `scripts/prepare-public-build.mjs` 清理私人题库、图片和错题数据。
 
 新增题库的标准流程：
 
@@ -269,7 +270,7 @@ short-answer, program-analysis, code, compound
 | 平台 | 存储位置 |
 | --- | --- |
 | Web | localStorage 中的单文档 |
-| Tauri | appData 下的 `quiz-data.json` |
+| Tauri | 应用数据目录下的 `quiz-data.json`；题库和图片另存于 `content/subjects`、`content/images` |
 
 答题会话属于临时 UI 状态，错题本属于用户主数据，两者不应混用同一个存储入口。
 
@@ -293,14 +294,24 @@ PlantUML 源码可能发送到设置中的远程 Server。包含敏感信息的�
 
 ## 10. 平台适配设计
 
-### 10.1 外部链接
+### 10.1 资源目录与导入
+
+题库新增流程按运行环境区分：
+
+- 开发环境：将 UTF-8 JSON 放入 `public/subjects/`，图片放入 `public/images/`，然后运行 `npm run prebuild` 刷新清单；
+- 安装版：将题库和图片放入设置页打开的用户 `content/subjects/`、`content/images/`；
+- 应用内导入和 AI 转换：由应用自动保存到当前环境的可写资源目录。
+
+内置题库来自安装资源目录，列表中的 `deletable` 标志决定是否允许删除；不要通过修改安装目录来管理用户题库。
+
+### 10.2 外部链接
 
 `openExternal.ts` 只允许 HTTP(S) 链接：
 
 - Web 使用 `window.open`；
 - Tauri 使用 shell plugin。
 
-### 10.2 内容目录
+### 10.3 内容目录
 
 `openContentLocation.ts` 负责运行时分流，Rust 命令 `open_content_location` 负责桌面端目录白名单和系统文件管理器调用。
 
@@ -313,7 +324,7 @@ images
 
 不接受任意用户路径，从而避免该命令演变为通用的本地路径打开接口。
 
-### 10.3 打包资源
+### 10.4 打包资源
 
 `src-tauri/tauri.conf.json` 将：
 
@@ -373,7 +384,7 @@ npm run build
 
 ```bash
 npm run tauri:dev
-npm run tauri:build
+npm run tauri:build -- --bundles nsis
 ```
 
 Tauri 构建前会执行前端构建，并将题库和图库作为桌面资源复制。

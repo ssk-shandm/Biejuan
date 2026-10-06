@@ -141,6 +141,9 @@ Android 的应用图标与桌面端一致，构建前会同步图标资源。正
 | `npm run tauri:dev` | 启动桌面开发版 |
 | `npm run type-check` | 检查 Vue 与 TypeScript 类型 |
 | `npm run lint` | 运行 ESLint 并自动修复 |
+| `npm test` | 运行题库、错题持久化、AI 配置和版本一致性回归 |
+| `npm run verify` | 配置检查、非改写式 lint、类型检查和自动化测试 |
+| `npm run verify:release` | 代码回归、Web 构建、Rust 测试和发布资源检查 |
 | `npm run config:check` | 检查配置与示例文件 |
 | `npm run build` | 类型检查并构建 Web 生产版 |
 | `npm run tauri:build` | 构建桌面程序和安装包 |
@@ -169,3 +172,7 @@ docs/             架构、设计、AI 转换及双端打包文档
 ## 支持项目
 
 如果这个项目对你有帮助，欢迎在 GitHub 仓库点一个 **Star**。你的支持会帮助项目持续改进！
+
+## 版本收尾与后续计划
+
+当前发布版本为 [v0.1.6](docs/RELEASE_NOTES_v0.1.6.md)（2026-10-06），作为 v0.1 的数据保护与发布安全收尾补丁。进入 v0.2 前请查看 [v0.1 收尾清单](docs/V0.1_CLOSEOUT.md)；后续功能与验收标准见 [产品路线与 TODO](docs/ROADMAP_0.2_TO_1.0.md)。错题本备份不等同于包含题库、图片与练习进度的全量备份。

@@ -33,6 +33,10 @@ public/config/
 
 **桌面端密钥持久化**：点击“保存连接”会把 API Key 写入本地 `app_config_dir/llm-config.txt` 的 `provider.apiKey` 字段，重启后自动读取。该字段可选，旧版配置仍可使用；点击“清除密钥”会同时清除文件中的密钥。密钥以明文保存，请勿分享配置文件，也不要将真实密钥填写到公开示例或提交到仓库。网页端仍使用 `sessionStorage`，关闭标签页后失效。
 
+## 桌面内置默认配置
+
+从 v0.1.6 起，桌面端只嵌入无密钥的 `examples/llm-user-config.example.json` 公共模板，不再编译开发版可写的 `config/llm-config.json`。首次创建配置后需填写自己的模型连接；现有本地配置文件不被重置。开发用配置不要提交真实密钥。
+
 ## 内置文档转换流程
 
 `llm/framework.json` 定义与供应商无关的处理流程：

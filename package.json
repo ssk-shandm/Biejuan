@@ -1,6 +1,6 @@
 {
   "name": "aaa",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "type": "module",
   "engines": {
@@ -20,7 +20,13 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "config:check": "node scripts/check-config.mjs"
+    "config:check": "node scripts/check-config.mjs",
+    "test": "node --test scripts/test-*.mjs",
+    "test:rust": "node scripts/prepare-public-build.mjs && cargo test --manifest-path src-tauri/Cargo.toml",
+    "lint:check": "eslint src vite.config.ts eslint.config.ts --max-warnings 0",
+    "release:check": "node scripts/check-release.mjs",
+    "verify": "npm run config:check && npm run lint:check && npm run type-check && npm test",
+    "verify:release": "npm run verify && npm run build && npm run test:rust && npm run release:check"
   },
   "dependencies": {
     "@tauri-apps/plugin-shell": "^2.3.6",

@@ -1,80 +1,118 @@
-﻿# AI 文档转换配置与后续计划
+# AI 文档转换配置与后续计划
 
-更新时间：2026-09-30
+> 文档性质：记录当前 AI 文档转题库实现、配置边界和后续质量工作。
+>
+> 更新时间：2026-10-05
 
-## 当前实现结论
+## 1. 当前实现结论
 
-AI 文档转换已经不是空入口，当前流程已经接入真实的 OpenAI 兼容接口：
+AI 文档转换已经接入真实的 OpenAI 兼容 Chat Completions 接口，核心代码位于：
 
-1. 在“设置 → AI 模型配置”中保存 `baseUrl`、模型名、请求参数。
-2. API Key 只保存在当前 WebView 会话的 `sessionStorage`，不会写进构建产物或题库 JSON。
-3. 文档先在本地提取文字：DOCX（含自动编号、表格、图片）、PPTX、PDF（含 OCR）、XLSX、TXT、Markdown、JSON、CSV。
-4. 点击“开始转换为题库 JSON”后，程序读取 `public/config/llm/framework.json`、各步骤 Prompt 和题库 Schema。
-5. 转换由 `src/services/questionBankConverter.ts` 完成，文档结构全部由模型理解：`analyze` 划分题目区/答案区并命名 → `convert` 按行号分段并发转换 → 本地按行号合并、关联图片 → `answer-match` 回填独立答案区 → 逐题 Schema 校验与 `repair`。
-6. 模型请求由 `src/services/llmClient.ts` 负责：流式读取、空闲超时、429/5xx 退避重试、JSON 模式与 thinking 开关的自动降级、输出截断检测、取消。
-7. 通过校验后保存到 IndexedDB，本地题库会自动出现在主页的题库选择列表中，并跳转到终端页显示过程日志。
+- `src/components/AiDocumentConverter.vue`：文件选择、文本提取、确认提示、过程展示和结果导出；
+- `src/services/questionBankConverter.ts`：与 UI 无关的转换流水线；
+- `src/services/llmClient.ts`：请求、流式响应、超时、重试和取消；
+- `public/config/llm/framework.json`：流水线参数、分段策略和 Prompt 配置；
+- `public/config/schemas/question-bank.schema.json`：转换结果的机器校验规则。
 
-Android 端已经声明 `android.permission.INTERNET`，并使用 Tauri 的应用配置目录保存非密钥配置。API Key 仍然只在当前会话内使用，重启应用后需要重新填写，这是有意的安全策略。
-
-## Android 配置步骤
-
-1. 打开“设置 → AI 模型配置”。
-2. 填写 OpenAI 兼容服务的基础地址，例如 `https://api.openai.com/v1`。不要重复填写 `/chat/completions`；程序会自动补全。
-3. 填写模型名和 API Key，点击保存或测试连接。
-4. 打开“文档转换”，选择文件并确认允许将提取后的文本发送到第三方模型服务。
-5. 转换完成后返回首页，在题库选择器中选择新题库。
-
-如果服务商只支持自定义鉴权头、非 OpenAI 的请求体、或必须通过服务端代理，目前尚未直接支持，需要增加协议适配器。
-
-## 当前限制与风险
-
-- API Key 从浏览器或 Android WebView 直接请求第三方服务，服务商必须允许 CORS；遇到 `Failed to fetch` 时应先检查 CORS、网络、证书和接口地址。
-- 不同服务商的 JSON Schema、`response_format` 和流式 SSE 格式存在差异。目前使用通用的 `messages`、`temperature`、`max_tokens`、`stream` 参数，并兼容常见 Chat Completions 响应。
-- 大文档会按照框架配置分段，并在本地合并和去重；超大 PDF/OCR 仍可能消耗较多 Android 内存。
-- 当前 API Key 不持久化。后续如支持安全存储，应使用 Android Keystore/Tauri 安全存储，而不是 localStorage。
-- 文档文本可能包含个人信息或内部资料。远程处理前必须取得用户确认，应用不应默认上传原文。
-
-## 推荐架构
+当前流水线为：
 
 ```text
-本地文件
-  ↓
-格式提取 / OCR（图片以 <source_image id="img-001"/> 锚点留在原位）
-  ↓
-按行编号
-  ↓
-analyze：行轮廓 → 题目区 / 答案区 / 无关区 + 题库名称
-  ↓
-convert：题目区分段并发，每题带 startLine/endLine（截断时自动二分）
-  ↓
-本地合并：按行号去重、按锚点行关联图片
-  ↓
-answer-match：答案区原文 + 题目摘要 → 回填答案（含综合题小问）
-  ↓
-逐题 Schema 校验 → repair（最多 2 次）
-  ↓
-题号重排、图片路径归一化 → IndexedDB 保存题库
+本地提取文件
+  → analyze：识别题目区、答案区、无关区并命名题库
+  → convert：按行号切分题目区并发转换
+  → 本地合并：按行号去重并关联图片
+  → answer-match：匹配独立答案区
+  → repair：修复 Schema 校验失败的题目
+  → 重排题号、校验并保存
 ```
 
-UI（`AiDocumentConverter.vue`）只负责文件提取和状态展示，流水线与 Vue 无关，可以在 Node 中直接调试。
+模型负责理解文档结构；本地程序负责分段、合并、去重、答案关联、图片路径处理和 Schema 校验。**Schema 校验通过不代表题目内容一定正确，用户仍应抽查结果。**
 
-## 后续开发任务
+## 2. 配置和 API Key 存储
 
-- [ ] 增加服务商协议选项：OpenAI Chat Completions、Responses API、Gemini/Claude 适配器。
-- [ ] 增加可选自定义请求头，但默认禁止把 API Key 写入普通配置文件。
-- [ ] 为 Android 增加网络错误分类：无网络、证书错误、CORS、401/403、429、5xx。
-- [x] 增加取消转换按钮。
-- [ ] 后台任务恢复策略。
-- [ ] 进度百分比和剩余分段数。
-- [ ] 增加本地脱敏预览：发送前显示文本长度、图片数和预计请求次数。
-- [ ] 为常见服务商补充端到端测试夹具，覆盖非流式、SSE、空响应和 Schema 修复。
-- [ ] Android 正式版接入 Keystore/Tauri 安全存储后，再考虑“记住 API Key”。
+### Windows / Tauri 桌面版
 
-## 验收标准
+在“设置 → AI 模型配置”点击“保存连接”后，配置写入 Tauri 应用配置目录：
 
-- 模型配置保存后，重启应用仍能读取地址、模型和请求参数；API Key 按安全策略重新输入。
-- 测试连接成功时能看到明确的 HTTP 状态和服务商错误信息，日志中不出现 API Key。
-- 使用 DOCX/PDF/XLSX/TXT 至少各转换一次；转换结果能通过 Schema 校验并保存到主页题库列表。
-- 模型返回 Markdown 代码围栏、空响应、超时、429 或非法 JSON 时，终端页能显示可理解的错误，并允许重试。
-- Android 弱网下不会卡死界面，返回键不会丢失已生成但尚未保存的结果。
-- 删除转换题库前，明确提示会同步删除对应错题本、错题记录和练习进度。
+```text
+%APPDATA%/com.exam.assistant/llm-config.txt
+```
+
+文件中包含 `provider.apiKey`。程序重启时会自动读取，因此不需要每次重新输入。该文件属于用户本机敏感配置：
+
+- 不进入 `public/`、题库 JSON、日志或版本控制；
+- 不复制到发布包；
+- 用户可在设置页清除 API Key；
+- 如需迁移配置，应由用户自行处理，默认不随题库备份导出。
+
+### Web 生产版
+
+浏览器无法安全地由应用直接写入任意本地配置文件，因此 Web 版只在当前会话使用 `sessionStorage` 保存 API Key。刷新或关闭会话后需要重新输入。普通配置可以由 Web 版保存，但不能把密钥写入构建产物。
+
+### Android
+
+Android 的 API Key 持久化行为必须以当前构建和真机验收结果为准，本文不把“跨重启记住密钥”作为 Android 正式承诺。后续应评估 Android Keystore 或 Tauri 安全存储；在此之前，不要把 API Key 放入普通 `localStorage`、导出文件或日志。
+
+## 3. 文档转换输入和输出
+
+文档先在本地提取文字，当前支持 DOCX、PPTX、PDF（含 OCR）、XLSX/XLSM、TXT、Markdown、JSON 和 CSV。发送到第三方模型前，界面必须显示确认提示，用户明确同意后才允许远程处理。
+
+桌面端转换结果保存到用户数据目录，而不是 `Program Files`：
+
+```text
+%LOCALAPPDATA%/com.exam.assistant/content/subjects/
+%LOCALAPPDATA%/com.exam.assistant/content/images/
+```
+
+开发版因便于调试，会将应用内生成的题库写入项目 `public/subjects/`，图片写入 `public/images/`；正式安装版写入上面的用户目录。保存失败时应允许用户下载 JSON 备份，而不是把结果标记为完全失败。
+
+## 4. 请求能力和错误处理
+
+`llmClient.ts` 当前支持：
+
+- OpenAI 兼容 `messages`、`temperature`、`max_tokens`、`stream` 请求；
+- 流式 SSE 读取和非流式响应；
+- 空闲超时；
+- 429、5xx 等可重试错误的退避重试；
+- JSON 模式和 thinking 参数不受支持时的自动降级；
+- 输出截断检测；
+- 用户取消转换；
+- 日志中隐藏 API Key，仅记录接口、阶段、耗时和可诊断错误。
+
+不同服务商的请求体、鉴权头、Schema 和 SSE 格式可能不同。当前正式支持边界是 OpenAI Chat Completions 兼容接口；其他协议需要单独的适配器和测试夹具。
+
+## 5. 当前限制与风险
+
+- 服务商必须允许来自浏览器/WebView 的请求；`Failed to fetch` 需要区分 CORS、网络、证书、接口地址和服务端拒绝。
+- 大文档会被分段并发处理，超大 PDF/OCR 可能消耗较多内存和模型额度。
+- 模型可能漏题、重复题、误判题型或生成格式正确但内容错误的题目。
+- 文档可能含有个人信息或内部资料，发送前必须确认隐私风险。
+- 内置题库只读；用户手动放置、应用导入和 AI 生成的题库必须进入用户可写目录。
+
+## 6. 后续 TODO
+
+### 质量和可恢复性
+
+- [ ] 转换前展示字符数、图片数、分段数、模型、接口和预计请求次数。
+- [ ] 分开展示预期题数、识别题数、答案完整题数和异常题数。
+- [ ] 支持失败分段单独重试和从中断位置恢复。
+- [ ] 提供结果预览、题目抽查、异常题定位和局部删除。
+- [ ] 保存失败时稳定导出 JSON 和图片资源，并提供重试入口。
+- [ ] 增加 DOCX/PDF/XLSX/TXT、SSE、非流式、空响应、截断、429、5xx 和 Schema 修复测试夹具。
+
+### 平台和安全
+
+- [ ] 为 Android 分类显示无网络、证书、CORS、401/403、429 和 5xx 错误。
+- [ ] 评估 Android Keystore/Tauri 安全存储，并完成真机重启、清除和迁移验收。
+- [ ] 增加服务商协议适配器（Responses API、Gemini、Claude 等），每种协议独立验收。
+- [ ] 增加可选自定义请求头，但禁止将密钥写入普通日志、题库或发布资源。
+- [ ] 增加后台任务恢复策略和大文档内存保护。
+
+## 7. 验收标准
+
+- Windows 桌面版保存 API Key 后重启应用，配置仍可读取；清除密钥后文件中的 `provider.apiKey` 为空。
+- 任意日志、导出题库、构建产物和 Git 差异中都不出现真实 API Key。
+- 转换前有第三方发送确认；取消、超时、429、5xx、空响应和非法 JSON 均有可理解的提示。
+- 至少用 DOCX、PDF、XLSX、TXT 各完成一次转换，结果通过 Schema 校验并出现在题库列表。
+- 用户题库和图片保存到可写用户目录；安装目录内置资源保持只读。
+- 转换生成的结果即使本机保存失败，也能导出 JSON 备份，不丢失已生成内容。

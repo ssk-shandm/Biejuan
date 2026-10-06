@@ -6,7 +6,7 @@ use std::process::Command;
 use tauri::{Emitter, Manager as _};
 mod public_banks;
 
-const DEFAULT_LLM_CONFIG: &str = include_str!("../../config/llm-config.json");
+const DEFAULT_LLM_CONFIG: &str = include_str!("../../public/config/examples/llm-user-config.example.json");
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -661,6 +661,15 @@ mod content_tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn shipped_llm_defaults_do_not_embed_development_credentials() {
+        let defaults: serde_json::Value = serde_json::from_str(DEFAULT_LLM_CONFIG).unwrap();
+        assert!(defaults["provider"]["apiKey"].as_str().unwrap_or("").is_empty());
+        assert_eq!(defaults["privacy"]["allowRemoteProcessing"], false);
+        assert_eq!(defaults["privacy"]["confirmBeforeSending"], true);
+        assert_eq!(defaults["schemaVersion"], 1);
     }
 
     fn payload(content: &str, image: &str) -> public_banks::BankPayload {

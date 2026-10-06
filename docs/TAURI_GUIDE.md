@@ -6,7 +6,7 @@
 
 - Node.js、npm、Rust 和 Windows 桌面开发依赖（Visual Studio C++ Build Tools、WebView2）。
 - 构建 Android 另需 Android SDK/NDK、JDK、Rust Android 目标；首次运行 `npx tauri android init`。
-- 本地题库和图片不包含在正式构建中；在应用内自行导入。
+- 私人题库、私人图片和错题数据不包含在正式构建中；正式构建只保留脱敏后的内置资源和空目录占位。安装版用户资源写入 `%LOCALAPPDATA%/com.exam.assistant/content/`。
 
 ## 检查和 Windows 桌面版
 
@@ -14,10 +14,10 @@
 npm ci
 npm run config:check
 npm run build
-npm run tauri:build
+npm run tauri:build -- --bundles nsis
 ```
 
-安装程序在 `src-tauri/target/release/bundle/nsis/别卷_<版本>_x64-setup.exe`；便携式程序在 `src-tauri/target/release/别卷.exe`。发布时可将后者另存为带版本号的文件。
+安装程序输出为 `src-tauri/target/release/bundle/nsis/别卷_<版本>_x64-setup.exe`；构建目录中的主程序为 `src-tauri/target/release/别卷.exe`。是否发布便携版由具体版本决定，不能把便携版当作自动更新安装包。
 
 ## Android APK（arm64）
 
@@ -33,13 +33,13 @@ npx tauri android build --apk --target aarch64 --ci
 ## 发布与检查更新
 
 1. 运行类型检查、Web 构建和两端构建，确认 APK 有效签名、安装包版本一致。
-2. 提交源码并推送；创建对应 `v<版本>` 标签及 GitHub Release，上传 Windows NSIS、便携版和签名 APK。
+2. 提交源码并推送；创建对应 `v<版本>` 标签及 GitHub Release，按版本说明上传声明的 Windows NSIS、便携版或签名 APK 资产。
 3. Windows 客户端通过 GitHub Releases 的 latest API 检查新版并查找 `*-setup.exe` 安装包；Android 不会自动安装 Windows 更新。
 
 自动更新仅适用于 NSIS 安装版，不会将 Release 中的便携版 `.exe` 当成安装包运行。安装包保存到用户下载目录（不可用时回退到临时目录），完成下载校验后通过 Windows Shell 启动并请求管理员授权。更新使用 `/UPDATE /P /R`，并通过最后一个 `/D=<当前安装目录>` 参数锁定原安装位置；应用在安装器成功启动后退出，安装成功后由安装器重启。
 
 如果更新后从旧快捷方式启动仍显示旧版本，先检查快捷方式目标是否指向旧便携版或另一份安装。请用 `*-setup.exe` 安装一次，再从安装器生成的快捷方式启动；不要继续启动旧的便携版文件。取消管理员授权或下载失败时不会退出当前应用。
 
-发布验收：从旧版安装位置启动 → 自动更新 → 同意管理员授权 → 等待安装器重启 → 确认版本 → 关闭后从同一快捷方式再次启动，确认版本和安装路径均未回退。另验证 Release 同时存在便携版与安装包、中文安装包名、取消授权和便携版启动时的提示。
+发布验收：从旧版安装位置启动 → 自动更新 → 同意管理员授权 → 等待安装器重启 → 确认版本 → 关闭后从同一快捷方式再次启动，确认版本和安装路径均未回退。Release 中声明的资产必须齐全，并验证中文安装包名、取消授权和便携版启动时的提示（若该版本发布便携版）。
 
 首次打开移动端可通过底部导航在「首页」「错题本」等入口切换。请勿将源码中的临时题库、API Key、私有签名材料或未签名产物上传。
