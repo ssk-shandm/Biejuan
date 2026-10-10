@@ -68,6 +68,7 @@ tmp_docx/
 # LLM 本地凭据（真实 API Key 不入库）
 llm-user-config.json
 *.llm.local.json
+config/llm-config.json
 
 # Environment variables and local credentials
 .env
