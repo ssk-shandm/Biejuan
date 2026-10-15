@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/nicegui/tauri-v2-tauri/refs/heads/main/core/tauri-config-schema/schema.json",
   "productName": "别卷",
   "mainBinaryName": "别卷",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "identifier": "com.exam.assistant",
   "build": {
     "frontendDist": "../dist",
@@ -40,10 +40,6 @@
       "nsis": {
         "installMode": "perMachine"
       }
-    },
-    "resources": {
-      "../.tmp-build/public/subjects/": "public/subjects",
-      "../.tmp-build/public/images/": "public/images"
     }
   }
 }

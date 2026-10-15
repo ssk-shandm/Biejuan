@@ -1,5 +1,5 @@
 <template>
-  <div class="answer-card-drawer" :class="{ 'is-collapsed': !isExpanded }">
+  <div class="answer-card-drawer" :class="{ 'is-collapsed': !isExpanded && !props.alwaysVisible, 'always-visible': props.alwaysVisible }">
     <div class="drawer-inner" @mouseleave="handleMouseLeave">
       <!-- 触发条 -->
       <div
@@ -19,10 +19,11 @@
           <h3>答题卡</h3>
           <button
             class="pin-btn"
+            :disabled="props.alwaysVisible"
             @click.stop="togglePin"
-            :title="isPinned ? '取消固定' : '固定展开'"
+            :title="props.alwaysVisible ? '传统模式下已固定' : (isPinned ? '取消固定' : '固定展开')"
           >
-            {{ isPinned ? '📌' : '📍' }}
+            {{ props.alwaysVisible || isPinned ? '📌' : '📍' }}
           </button>
         </div>
         <div class="card-grid">
@@ -63,6 +64,7 @@ const props = withDefaults(defineProps<{
       userAnswer: UserAnswer
       isCorrect: boolean | null
       subAnswers?: Map<number, SubAnswer>
+      subDrafts?: Record<number, string>
     }
   >
   currentIndex: number
@@ -72,9 +74,12 @@ const props = withDefaults(defineProps<{
   displayNumbers?: number[]
   defaultExpanded?: boolean
   defaultPinned?: boolean
+  /** Traditional desktop layout keeps the answer card visible and pinned. */
+  alwaysVisible?: boolean
 }>(), {
   defaultExpanded: true,
   defaultPinned: false,
+  alwaysVisible: false,
 })
 
 const emit = defineEmits<{
@@ -88,6 +93,7 @@ const isExpanded = ref(props.defaultExpanded)
 const isPinned = ref(props.defaultPinned)
 
 function setExpanded(expanded: boolean) {
+  if (props.alwaysVisible) expanded = true
   if (isExpanded.value === expanded) return
   isExpanded.value = expanded
   emit('update:expanded', expanded)
@@ -102,10 +108,12 @@ function collapse() {
 }
 
 function toggleExpand() {
+  if (props.alwaysVisible) return
   setExpanded(!isExpanded.value)
 }
 
 function togglePin() {
+  if (props.alwaysVisible) return
   isPinned.value = !isPinned.value
   if (isPinned.value) {
     expand()
@@ -113,12 +121,14 @@ function togglePin() {
 }
 
 function handleMouseEnter() {
+  if (props.alwaysVisible) return
   if (!isExpanded.value) {
     expand()
   }
 }
 
 function handleMouseLeave() {
+  if (props.alwaysVisible) return
   if (!isPinned.value) {
     collapse()
   }
@@ -135,6 +145,9 @@ function computeButtonClass(question: Question, index: number): string[] {
 
   // 复合题：检查子题
   if (question.subQuestions && question.subQuestions.length > 0) {
+    if (Object.values(entry?.subDrafts ?? {}).some(answer => answer.trim())) {
+      classes.push('answered')
+    }
     if (entry?.subAnswers && entry.subAnswers.size > 0) {
       classes.push('answered')
       let correctCount = 0

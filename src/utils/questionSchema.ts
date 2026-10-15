@@ -16,7 +16,7 @@ const TYPE_MAP: Record<string, QuestionType> = {
   fill: '填空题', 填空: '填空题', 填空题: '填空题',
   'short-answer': '简答题', 简答: '简答题', 简答题: '简答题',
   'program-analysis': '程序分析题', 程序分析: '程序分析题', 程序分析题: '程序分析题',
-  code: '编程题', 编程: '编程题', 编程题: '编程题', 代码题: '编程题',
+  code: '编程题', 编程: '编程题', 编程题: '编程题', 代码题: '编程题', 代码应用题: '编程题',
   compound: '综合题', 复合题: '综合题', 综合题: '综合题', SQL综合题: '综合题',
   综合应用题: '综合应用题',
 }
@@ -111,7 +111,7 @@ function normalizeQuestion(value: unknown, index: number, sourceName: string): Q
   const question = String(source.content ?? source.question ?? '').trim()
   if (!question) throw new Error(`${path}.content（或旧字段 question）不能为空`)
 
-  const type = normalizeQuestionType(source.type, path)
+  let type = normalizeQuestionType(source.type, path)
   const format = normalizeContentFormat(source.format)
   const inheritedFormat = inheritedContentFormat(format)
   const answerFormat = normalizeContentFormat(source.answerFormat, inheritedFormat)
@@ -123,6 +123,11 @@ function normalizeQuestion(value: unknown, index: number, sourceName: string): Q
   const rawSubQuestions = source.subQuestions
   if (rawSubQuestions != null && !Array.isArray(rawSubQuestions)) {
     throw new Error(`${path}.subQuestions 必须是数组`)
+  }
+  // Legacy comprehensive questions use a whole-question reference answer, not subquestions.
+  // Keep canonical compound/复合题 strict so malformed new imports still fail preflight.
+  if (['综合题', '综合应用题', 'SQL综合题'].includes(String(source.type).trim()) && !rawSubQuestions?.length) {
+    type = '简答题'
   }
 
   return {

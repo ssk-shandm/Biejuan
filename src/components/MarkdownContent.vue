@@ -1,7 +1,6 @@
 <template>
-  <component :is="tag" ref="root" class="markdown-content" :class="{ 'plain-content': resolvedFormat === 'text' }">
-    <template v-if="resolvedFormat === 'text'">{{ content }}</template>
-    <template v-else><div class="markdown-html" v-html="renderedDocument.html"></div></template>
+  <component :is="tag" ref="root" class="markdown-content">
+    <div class="markdown-html" v-html="renderedDocument.html"></div>
   </component>
 </template>
 
@@ -23,19 +22,22 @@ const props = withDefaults(defineProps<{
   tag?: string
 }>(), {
   content: '',
-  format: 'text',
+  format: 'markdown',
   tag: 'div',
 })
 
 const root = ref<HTMLElement | null>(null)
-const resolvedFormat = computed(() => normalizeContentFormat(props.format))
+const resolvedFormat = computed(() => {
+  const format = normalizeContentFormat(props.format)
+  return format === 'text' ? 'markdown' : format
+})
 const renderedDocument = computed(() => renderMarkdownDocument(props.content, resolvedFormat.value))
 let renderVersion = 0
 
 async function renderDiagrams() {
   const version = ++renderVersion
   await nextTick()
-  if (resolvedFormat.value === 'text' || !root.value || renderedDocument.value.diagrams.length === 0) return
+  if (!root.value || renderedDocument.value.diagrams.length === 0) return
 
   const config = await loadDiagramRendererConfig()
   const mermaidBlocks = renderedDocument.value.diagrams.some((diagram) => diagram.type === 'mermaid')
@@ -89,8 +91,9 @@ onMounted(() => { void renderDiagrams() })
 
 <style scoped>
 .markdown-content { min-width: 0; color: inherit; }
-.plain-content { white-space: pre-wrap; word-break: break-word; }
-.markdown-html { min-width: 0; }
+.markdown-html { min-width: 0; overflow-wrap: anywhere; }
+.markdown-content :deep(img) { max-width: 100%; height: auto; }
+.markdown-content :deep(.katex-display) { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
 .markdown-content :deep(p:first-child) { margin-top: 0; }
 .markdown-content :deep(p:last-child) { margin-bottom: 0; }
 .markdown-content :deep(pre) {

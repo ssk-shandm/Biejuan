@@ -4,9 +4,12 @@ use std::path::{Path, PathBuf};
 #[cfg(not(target_os = "android"))]
 use std::process::Command;
 use tauri::{Emitter, Manager as _};
+mod data_backup;
+mod persistence;
 mod public_banks;
 
-const DEFAULT_LLM_CONFIG: &str = include_str!("../../public/config/examples/llm-user-config.example.json");
+const DEFAULT_LLM_CONFIG: &str =
+    include_str!("../../public/config/examples/llm-user-config.example.json");
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,10 +41,12 @@ fn ensure_llm_config_file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     if !path.exists() {
         let legacy_path = legacy_llm_config_path(app)?;
         if legacy_path.is_file() {
-            fs::copy(&legacy_path, &path)
+            let content = fs::read(&legacy_path)
+                .map_err(|error| format!("无法读取旧版 LLM 配置：{error}"))?;
+            persistence::atomic_write_private(&path, &content)
                 .map_err(|error| format!("无法迁移旧版 LLM 配置：{error}"))?;
         } else {
-            fs::write(&path, DEFAULT_LLM_CONFIG)
+            persistence::atomic_write_private(&path, DEFAULT_LLM_CONFIG.as_bytes())
                 .map_err(|error| format!("无法创建默认 LLM 配置：{error}"))?;
         }
     }
@@ -62,6 +67,7 @@ fn read_llm_config(app: tauri::AppHandle) -> Result<LlmConfigPayload, String> {
 
 #[tauri::command]
 fn write_llm_config(app: tauri::AppHandle, content: String) -> Result<LlmConfigPayload, String> {
+    let _guard = persistence::DATA_LOCK.lock().map_err(|e| e.to_string())?;
     if content.len() > 256 * 1024 {
         return Err("LLM 配置文件不能超过 256 KB".to_string());
     }
@@ -73,7 +79,7 @@ fn write_llm_config(app: tauri::AppHandle, content: String) -> Result<LlmConfigP
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| format!("无法创建配置目录：{error}"))?;
     }
-    fs::write(&path, format!("{pretty}\n"))
+    persistence::atomic_write_private(&path, format!("{pretty}\n").as_bytes())
         .map_err(|error| format!("无法保存 LLM 配置：{error}"))?;
     Ok(LlmConfigPayload {
         content: pretty,
@@ -151,7 +157,7 @@ fn open_directory(path: &Path) -> std::io::Result<()> {
 }
 
 /// Open the writable question-bank or image-library directory.
-/// Packaged resources are read-only; installed apps write to per-user app data.
+/// Release builds use per-user app data; development uses the repository public tree.
 #[tauri::command]
 fn open_content_location(app: tauri::AppHandle, location: &str) -> Result<String, String> {
     let directory_name = content_directory_name(location)?;
@@ -161,20 +167,19 @@ fn open_content_location(app: tauri::AppHandle, location: &str) -> Result<String
     Ok(target.to_string_lossy().into_owned())
 }
 
-fn public_directory(_app: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn development_content_root() -> Option<PathBuf> {
     #[cfg(debug_assertions)]
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("public");
-
+    {
+        Some(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("public"),
+        )
+    }
     #[cfg(not(debug_assertions))]
-    let root = _app
-        .path()
-        .resource_dir()
-        .map_err(|error| format!("无法获取应用资源目录：{error}"))?
-        .join("public");
-
-    Ok(root)
+    {
+        None
+    }
 }
 
 fn user_content_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -185,12 +190,9 @@ fn user_content_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 fn writable_content_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    #[cfg(debug_assertions)]
-    {
-        public_directory(app)
-    }
-    #[cfg(not(debug_assertions))]
-    {
+    if let Some(root) = development_content_root() {
+        Ok(root)
+    } else {
         user_content_root(app)
     }
 }
@@ -201,10 +203,6 @@ fn content_directory_name(location: &str) -> Result<&str, String> {
         "images" => Ok("images"),
         _ => Err("不支持的资源位置".to_string()),
     }
-}
-
-fn content_directory(app: &tauri::AppHandle, location: &str) -> Result<PathBuf, String> {
-    Ok(public_directory(app)?.join(content_directory_name(location)?))
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -220,6 +218,7 @@ fn save_question_bank(
     app: tauri::AppHandle,
     payload: public_banks::BankPayload,
 ) -> Result<public_banks::BankSaveResult, String> {
+    let _guard = persistence::DATA_LOCK.lock().map_err(|e| e.to_string())?;
     let root = writable_content_root(&app)?;
     let prefix = if cfg!(debug_assertions) {
         "/subjects"
@@ -231,20 +230,21 @@ fn save_question_bank(
 
 #[tauri::command]
 fn list_question_banks(app: tauri::AppHandle) -> Result<Vec<QuestionBankEntry>, String> {
+    let development = development_content_root().map(|root| root.join("subjects"));
     list_question_banks_from_directories(
-        &content_directory(&app, "subjects")?,
+        development.as_deref(),
         &user_content_root(&app)?.join("subjects"),
-        cfg!(debug_assertions),
     )
 }
 
 fn list_question_banks_from_directories(
-    bundled: &Path,
+    development: Option<&Path>,
     user: &Path,
-    bundled_deletable: bool,
 ) -> Result<Vec<QuestionBankEntry>, String> {
-    let mut banks = scan_question_banks(bundled, "/subjects", bundled_deletable)?;
-    banks.extend(scan_question_banks(user, "/user-subjects", true)?);
+    let mut banks = scan_question_banks(user, "/user-subjects", true)?;
+    if let Some(directory) = development {
+        banks.extend(scan_question_banks(directory, "/subjects", true)?);
+    }
     banks.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(banks)
 }
@@ -301,25 +301,20 @@ fn scan_question_banks(
 
 #[tauri::command]
 fn read_question_bank(app: tauri::AppHandle, file: &str) -> Result<String, String> {
+    let development = development_content_root().map(|root| root.join("subjects"));
     read_question_bank_from_directories(
         file,
-        &content_directory(&app, "subjects")?,
+        development.as_deref(),
         &user_content_root(&app)?.join("subjects"),
     )
 }
 
 fn read_question_bank_from_directories(
     file: &str,
-    bundled: &Path,
+    development: Option<&Path>,
     user: &Path,
 ) -> Result<String, String> {
-    let (directory, file_name) = if let Some(name) = file.strip_prefix("/user-subjects/") {
-        (user, name)
-    } else if let Some(name) = file.strip_prefix("/subjects/") {
-        (bundled, name)
-    } else {
-        return Err("不支持的题库路径".to_string());
-    };
+    let (directory, file_name) = question_bank_directory(file, development, user)?;
     let target = resolve_question_bank_file(directory, file_name)?;
     let content = fs::read_to_string(&target)
         .map(|text| text.trim_start_matches('\u{feff}').to_owned())
@@ -356,33 +351,40 @@ fn resolve_question_bank_file(directory: &Path, file_name: &str) -> Result<PathB
 
 #[tauri::command]
 fn delete_question_bank(app: tauri::AppHandle, file: &str) -> Result<(), String> {
+    let _guard = persistence::DATA_LOCK.lock().map_err(|e| e.to_string())?;
+    let development = development_content_root().map(|root| root.join("subjects"));
     delete_question_bank_from_directories(
         file,
-        &content_directory(&app, "subjects")?,
+        development.as_deref(),
         &user_content_root(&app)?.join("subjects"),
-        cfg!(debug_assertions),
     )
 }
 
 fn delete_question_bank_from_directories(
     file: &str,
-    bundled: &Path,
+    development: Option<&Path>,
     user: &Path,
-    bundled_deletable: bool,
 ) -> Result<(), String> {
-    let (directory, file_name) = if let Some(name) = file.strip_prefix("/user-subjects/") {
-        (user, name)
-    } else if let Some(name) = file.strip_prefix("/subjects/") {
-        if !bundled_deletable {
-            return Err("安装包资源目录中的题库为只读，不能删除".to_string());
-        }
-        (bundled, name)
-    } else {
-        return Err("不支持的题库路径".to_string());
-    };
+    let (directory, file_name) = question_bank_directory(file, development, user)?;
     let target = resolve_question_bank_file(directory, file_name)?;
     // Delete only this JSON. Manually imported banks may share image resources.
     fs::remove_file(&target).map_err(|error| format!("无法删除题库 {}：{error}", target.display()))
+}
+
+fn question_bank_directory<'a>(
+    file: &'a str,
+    development: Option<&'a Path>,
+    user: &'a Path,
+) -> Result<(&'a Path, &'a str), String> {
+    if let Some(name) = file.strip_prefix("/user-subjects/") {
+        Ok((user, name))
+    } else if let Some(name) = file.strip_prefix("/subjects/") {
+        development
+            .map(|directory| (directory, name))
+            .ok_or_else(|| "正式版仅支持用户数据目录中的题库".to_string())
+    } else {
+        Err("不支持的题库路径".to_string())
+    }
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -432,6 +434,9 @@ fn safe_update_file_name(file_name: &str) -> Result<String, String> {
     }
     Ok(name.to_string())
 }
+
+#[cfg(target_os = "windows")]
+static PREPARED_UPDATE: std::sync::Mutex<Option<(PathBuf, PathBuf)>> = std::sync::Mutex::new(None);
 
 #[tauri::command]
 async fn download_and_install_update(
@@ -548,11 +553,26 @@ async fn download_and_install_update(
         }
         fs::rename(&partial, &target).map_err(|error| format!("无法保存更新安装包：{error}"))?;
 
-        let _ = app.emit(
-            "update-install-starting",
-            target.to_string_lossy().into_owned(),
-        );
-        launch_installer(&target, install_directory).map_err(|error| {
+        *PREPARED_UPDATE.lock().map_err(|e| e.to_string())? = Some((target, install_directory.to_path_buf()));
+        Ok(())
+    }
+}
+
+/// Frontend calls this only after its final notebook and learning writes finish.
+/// The path is held by Rust, never supplied as an arbitrary executable by JS.
+#[tauri::command]
+fn install_prepared_update(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        Err("Automatic installation is supported only on Windows desktop".into())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let prepared = PREPARED_UPDATE.lock().map_err(|e| e.to_string())?;
+        let (target, install_directory) = prepared.as_ref().ok_or("没有已下载并验证的更新安装包")?;
+        let _ = app.emit("update-install-starting", target.to_string_lossy().into_owned());
+        launch_installer(target, install_directory).map_err(|error| {
             format!(
                 "{error}。安装包已保存到：{}，可手动运行安装",
                 target.display()
@@ -625,9 +645,17 @@ pub fn run() {
             read_llm_config,
             write_llm_config,
             open_llm_config_file,
-            download_and_install_update
+            download_and_install_update,
+            install_prepared_update,
+            data_backup::read_app_document,
+            data_backup::prepare_learning_upgrade,
+            data_backup::write_app_document,
+            data_backup::export_content_data,
+            data_backup::restore_content_data,
+            data_backup::data_storage_info
         ])
         .setup(|_app| {
+            data_backup::recover_pending_restore(_app.handle()).map_err(std::io::Error::other)?;
             #[cfg(debug_assertions)]
             if let Some(window) = _app.get_webview_window("main") {
                 window.open_devtools();
@@ -666,7 +694,10 @@ mod content_tests {
     #[test]
     fn shipped_llm_defaults_do_not_embed_development_credentials() {
         let defaults: serde_json::Value = serde_json::from_str(DEFAULT_LLM_CONFIG).unwrap();
-        assert!(defaults["provider"]["apiKey"].as_str().unwrap_or("").is_empty());
+        assert!(defaults["provider"]["apiKey"]
+            .as_str()
+            .unwrap_or("")
+            .is_empty());
         assert_eq!(defaults["privacy"]["allowRemoteProcessing"], false);
         assert_eq!(defaults["privacy"]["confirmBeforeSending"], true);
         assert_eq!(defaults["schemaVersion"], 1);
@@ -687,9 +718,9 @@ mod content_tests {
     }
 
     #[test]
-    fn bundled_and_user_banks_are_listed_and_read_with_their_own_images() {
+    fn development_and_user_banks_are_listed_and_read_with_their_own_images() {
         let temp = TestDirectory::new();
-        let bundled = temp.0.join("installed-public");
+        let bundled = temp.0.join("development-public");
         let user = temp.0.join("user-data/content");
         let original =
             public_banks::save_bank(&bundled, "/subjects", payload("bundled", "AQ==")).unwrap();
@@ -698,7 +729,7 @@ mod content_tests {
         assert_eq!(generated.file, "/user-subjects/same-name.json");
         assert!(Path::new(&generated.location).starts_with(user.canonicalize().unwrap()));
         let installed_before = fs::read(&original.location).unwrap();
-        // A second save must not overwrite either an installed bank or an existing user bank.
+        // A second save must not overwrite either a development bank or an existing user bank.
         let second =
             public_banks::save_bank(&user, "/user-subjects", payload("second", "Aw==")).unwrap();
         assert_ne!(second.file, generated.file);
@@ -706,13 +737,14 @@ mod content_tests {
 
         let bundled = bundled.join("subjects");
         let user = user.join("subjects");
-        let banks = list_question_banks_from_directories(&bundled, &user, false).unwrap();
+        let banks = list_question_banks_from_directories(Some(&bundled), &user).unwrap();
         assert_eq!(banks.len(), 3);
         assert!(banks.iter().any(|entry| entry.file == original.file));
         assert!(banks.iter().any(|entry| entry.file == generated.file));
         let installed =
-            read_question_bank_from_directories(&original.file, &bundled, &user).unwrap();
-        let saved = read_question_bank_from_directories(&generated.file, &bundled, &user).unwrap();
+            read_question_bank_from_directories(&original.file, Some(&bundled), &user).unwrap();
+        let saved =
+            read_question_bank_from_directories(&generated.file, Some(&bundled), &user).unwrap();
         assert!(installed.contains("bundled"));
         assert!(installed.contains("data:image/png;base64,AQ=="));
         assert!(saved.contains("user"));
@@ -720,21 +752,20 @@ mod content_tests {
     }
 
     #[test]
-    fn absent_user_directory_does_not_hide_bundled_banks() {
+    fn absent_user_directory_does_not_hide_development_banks() {
         let temp = TestDirectory::new();
         let root = temp.0.join("public");
         public_banks::save_bank(&root, "/subjects", payload("bundled", "AQ==")).unwrap();
         let banks = list_question_banks_from_directories(
-            &root.join("subjects"),
+            Some(&root.join("subjects")),
             &temp.0.join("absent"),
-            false,
         )
         .unwrap();
         assert_eq!(banks.len(), 1);
     }
 
     #[test]
-    fn user_json_and_ai_banks_are_deletable_but_installed_banks_are_read_only() {
+    fn release_uses_only_user_banks_and_preserves_old_installation_files() {
         let temp = TestDirectory::new();
         let bundled = temp.0.join("installed-public");
         let user = temp.0.join("user-content");
@@ -746,49 +777,57 @@ mod content_tests {
         fs::write(&manual, r#"[{"type":"single","content":"manual"}]"#).unwrap();
         let bundled_subjects = bundled.join("subjects");
         let user_subjects = user.join("subjects");
-        let banks =
-            list_question_banks_from_directories(&bundled_subjects, &user_subjects, false).unwrap();
-        assert_eq!(banks.len(), 3);
-        assert!(
-            !banks
-                .iter()
-                .find(|bank| bank.file == installed.file)
-                .unwrap()
-                .deletable
-        );
+        let banks = list_question_banks_from_directories(None, &user_subjects).unwrap();
+        assert_eq!(banks.len(), 2);
         assert!(banks
             .iter()
-            .filter(|bank| bank.file.starts_with("/user-subjects/"))
-            .all(|bank| bank.deletable));
-        assert!(delete_question_bank_from_directories(
-            &installed.file,
-            &bundled_subjects,
-            &user_subjects,
-            false
-        )
-        .is_err());
+            .all(|bank| bank.deletable && bank.file.starts_with("/user-subjects/")));
+        assert!(
+            read_question_bank_from_directories(&installed.file, None, &user_subjects).is_err()
+        );
+        assert!(
+            delete_question_bank_from_directories(&installed.file, None, &user_subjects).is_err()
+        );
         assert!(Path::new(&installed.location).is_file());
-        delete_question_bank_from_directories(
-            "/user-subjects/manual.json",
-            &bundled_subjects,
-            &user_subjects,
-            false,
-        )
-        .unwrap();
-        delete_question_bank_from_directories(
-            &generated.file,
-            &bundled_subjects,
-            &user_subjects,
-            false,
-        )
-        .unwrap();
+        delete_question_bank_from_directories("/user-subjects/manual.json", None, &user_subjects)
+            .unwrap();
+        delete_question_bank_from_directories(&generated.file, None, &user_subjects).unwrap();
         assert!(!manual.exists());
         assert!(!Path::new(&generated.location).exists());
         assert!(user.join("images/same-name/picture.png").is_file());
-        let banks =
-            list_question_banks_from_directories(&bundled_subjects, &user_subjects, false).unwrap();
-        assert_eq!(banks.len(), 1);
-        assert_eq!(banks[0].file, installed.file);
+        let banks = list_question_banks_from_directories(None, &user_subjects).unwrap();
+        assert!(banks.is_empty());
+        assert!(bundled_subjects.join("same-name.json").is_file());
+    }
+
+    #[test]
+    fn release_starts_with_no_public_or_user_directory() {
+        let temp = TestDirectory::new();
+        let user = temp.0.join("absent/content/subjects");
+        assert!(list_question_banks_from_directories(None, &user)
+            .unwrap()
+            .is_empty());
+        assert!(!user.exists());
+        let saved = public_banks::save_bank(
+            user.parent().unwrap(),
+            "/user-subjects",
+            payload("first import", "AQ=="),
+        )
+        .unwrap();
+        assert_eq!(
+            list_question_banks_from_directories(None, &user)
+                .unwrap()
+                .len(),
+            1
+        );
+        let content = read_question_bank_from_directories(&saved.file, None, &user).unwrap();
+        assert!(content.contains("first import"));
+        assert!(content.contains("data:image/png;base64,AQ=="));
+    }
+
+    #[test]
+    fn development_content_is_only_available_in_debug_builds() {
+        assert_eq!(development_content_root().is_some(), cfg!(debug_assertions));
     }
 
     #[test]
@@ -797,8 +836,8 @@ mod content_tests {
         let bank = public_banks::save_bank(&temp.0, "/subjects", payload("dev", "AQ==")).unwrap();
         let subjects = temp.0.join("subjects");
         let user = temp.0.join("absent");
-        assert!(list_question_banks_from_directories(&subjects, &user, true).unwrap()[0].deletable);
-        delete_question_bank_from_directories(&bank.file, &subjects, &user, true).unwrap();
+        assert!(list_question_banks_from_directories(Some(&subjects), &user).unwrap()[0].deletable);
+        delete_question_bank_from_directories(&bank.file, Some(&subjects), &user).unwrap();
         assert!(!Path::new(&bank.location).exists());
     }
 
@@ -822,7 +861,7 @@ mod content_tests {
             "/other/bank.json",
         ] {
             assert!(
-                delete_question_bank_from_directories(file, &subjects, &subjects, true).is_err(),
+                delete_question_bank_from_directories(file, Some(&subjects), &subjects).is_err(),
                 "{file}"
             );
         }
@@ -846,7 +885,7 @@ mod content_tests {
             "/subjects/banks.json",
         ] {
             assert!(
-                read_question_bank_from_directories(file, &temp.0, &temp.0).is_err(),
+                read_question_bank_from_directories(file, Some(&temp.0), &temp.0).is_err(),
                 "{file}"
             );
         }

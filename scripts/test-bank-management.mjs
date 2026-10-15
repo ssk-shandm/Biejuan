@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
 import { test } from 'node:test'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
@@ -8,7 +9,19 @@ const compiled = ts.transpileModule(readFileSync(new URL('../src/services/public
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText
 
-function loadStorage({ desktop = true, fail = [] } = {}) {
+function loadUtility(path) {
+  const file = resolve(path)
+  const module = { exports: {} }
+  runInNewContext(ts.transpileModule(readFileSync(file, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText, {
+    module, exports: module.exports,
+    require: name => loadUtility(resolve(dirname(file), name + '.ts')),
+  })
+  return module.exports
+}
+
+function loadStorage({ desktop = true, fail = [], readText = '' } = {}) {
   const module = { exports: {} }
   const calls = []
   const events = []
@@ -21,15 +34,18 @@ function loadStorage({ desktop = true, fail = [] } = {}) {
     Error,
     CustomEvent,
     window: { dispatchEvent: event => events.push(event.type) },
+    fetch: async () => new Response(readText),
     require: name => {
       if (name === '@tauri-apps/api/core') return {
         invoke: async (command, args) => {
           calls.push({ command, ...args })
           if (fail.includes(args.file)) throw new Error('permission denied')
+          if (command === 'read_question_bank') return readText
         },
       }
       if (name === '../composables/usePlatform') return { usePlatform: () => ({ isDesktopTauri: { value: desktop } }) }
-      if (name === '../utils/questionSchema') return {}
+      if (name === '../utils/questionSchema') return loadUtility('src/utils/questionSchema.ts')
+      if (name === '../utils/bankImport') return loadUtility('src/utils/bankImport.ts')
       if (name === './publicBankWriter') return { PUBLIC_BANKS_CHANGED: 'public-banks-changed' }
       if (name === './generatedBankStorage') return {
         GENERATED_BANK_PREFIX: 'generated:',
@@ -41,6 +57,20 @@ function loadStorage({ desktop = true, fail = [] } = {}) {
   return { ...module.exports, calls, events }
 }
 const bank = (file, deletable) => ({ name: file, file, ...(deletable === undefined ? {} : { deletable }) })
+
+test('startup reads legacy comprehensive banks on desktop and web while still rejecting malformed canonical compounds', async () => {
+  const legacy = [{ number: 210, type: '综合应用题', question: '旧题干', answer: '整题答案' }]
+  for (const desktop of [true, false]) {
+    const api = loadStorage({ desktop, readText: '\uFEFF' + JSON.stringify(legacy) })
+    const questions = await api.readPublicBank('/subjects/legacy.json', '旧版题库')
+    assert.equal(questions.length, 1)
+    assert.equal(questions[0].number, 210)
+    assert.equal(questions[0].type, '简答题')
+    assert.equal(questions[0].answer, '整题答案')
+    const broken = loadStorage({ desktop, readText: JSON.stringify([{ ...legacy[0], type: 'compound' }]) })
+    await assert.rejects(broken.readPublicBank('/subjects/invalid.json'), /复合题没有子题/)
+  }
+})
 
 test('backend permission makes manual JSON and AI banks editable; bundled files stay read-only', () => {
   const api = loadStorage()

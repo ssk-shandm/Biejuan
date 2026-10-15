@@ -1,13 +1,15 @@
 import { ref, shallowRef, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import type { Question, UserAnswer, AppMode, SubAnswer, SubQuestion } from '../types'
 import { stripMarkdown } from '../utils/markdown'
+import { persistLearningState } from '../services/learningPersistence'
+import { bankIssueReport, inspectBank } from '../utils/bankImport'
 import { normalizeQuestionBank } from '../utils/questionSchema'
 import { useQuizStore } from '../stores/quizStore'
 import { showToast, showConfirm } from './useToast'
 import { isJsonFile, readImportedText } from '../services/fileService'
-import { GENERATED_BANK_PREFIX, GENERATED_BANKS_CHANGED, listGeneratedBanks, readGeneratedBank, saveGeneratedBank } from '../services/generatedBankStorage'
+import { GENERATED_BANK_PREFIX, GENERATED_BANKS_CHANGED, listGeneratedBanks, readGeneratedBank } from '../services/generatedBankStorage'
 import { listPublicBanks, readPublicBank } from '../services/publicBankStorage'
-import { PUBLIC_BANKS_CHANGED, migrateGeneratedBanksToPublic } from '../services/publicBankWriter'
+import { PUBLIC_BANKS_CHANGED, migrateGeneratedBanksToPublic, savePublicBank } from '../services/publicBankWriter'
 
 export interface BankEntry {
   name: string
@@ -23,6 +25,7 @@ export type AnswerSheetEntry = {
   isCorrect: boolean | null
   showResult?: boolean
   subAnswers?: Map<number, SubAnswer>
+  subDrafts?: Record<number, string>
 }
 
 /** 所有题库（启动时从 banks.json 动态加载） */
@@ -80,7 +83,10 @@ export function useQuiz() {
 
   // ── 计算属性 ──
   const practiceStateKey = computed(() => `practice_session_${currentBankFile.value}`)
-  const wrongStateKey = computed(() => `wrong_session_${currentBankFile.value}`)
+  const wrongStateKey = computed(() => {
+    const notebookId = quizStore.getActiveNotebook(currentBankFile.value)?.id
+    return `wrong_session_${currentBankFile.value}${notebookId ? `_${notebookId}` : ''}`
+  })
   const shufflePrefKey = computed(() => `practice_shuffle_pref_${currentBankFile.value}`)
   const totalQuestions = computed(() => shuffledQuestions.value.length)
   const wrongCount = computed(() => quizStore.wrongEntries.filter((e) => e.bankFile === currentBankFile.value).length)
@@ -209,6 +215,7 @@ export function useQuiz() {
   function handleBankChange(newFileName: string) {
     if (isRefreshingBanks.value) return
     if (newFileName === currentBankFile.value) return
+    flushSessionSave()
     answerSheet.value.clear()
     currentQuestionIndex.value = 0
     window.history.pushState({ mode: 'start', bank: newFileName }, '', '')
@@ -233,6 +240,7 @@ export function useQuiz() {
 
     // 管理/设置页面：直接切换，不初始化题目。
     if (mode === 'wrong-manage' || mode === 'settings' || mode === 'about') {
+      flushSessionSave()
       appMode.value = mode
       if (pushState) {
         window.history.pushState({ mode, bank: currentBankFile.value }, '', '')
@@ -257,7 +265,7 @@ export function useQuiz() {
 
     // restore shuffle pref
     const savedShuffle = localStorage.getItem(shufflePrefKey.value)
-    shuffleEnabled.value = savedShuffle !== null ? JSON.parse(savedShuffle) : false
+    shuffleEnabled.value = savedShuffle === 'true'
 
     if (mode === 'practice') {
       temp = restoreOrBuild(practiceStateKey.value, () =>
@@ -286,7 +294,18 @@ export function useQuiz() {
         wrongDisplayEntryIds.value = []
       }
       // 恢复错题模式的答题记录
-      const wrongRaw = localStorage.getItem(wrongStateKey.value)
+      const legacyKey = `wrong_session_${currentBankFile.value}`
+      let wrongRaw = localStorage.getItem(wrongStateKey.value)
+      // The old bank-wide session belongs only to the first notebook opened after migration.
+      if (!wrongRaw && wrongStateKey.value !== legacyKey) {
+        wrongRaw = localStorage.getItem(legacyKey)
+        if (wrongRaw) {
+          try {
+            localStorage.setItem(wrongStateKey.value, wrongRaw)
+            localStorage.removeItem(legacyKey)
+          } catch { showToast('错题进度迁移保存失败，原进度已保留，请检查存储空间。') }
+        }
+      }
       if (wrongRaw) {
         try {
           const wrongState = JSON.parse(wrongRaw)
@@ -302,7 +321,10 @@ export function useQuiz() {
           if (typeof wrongState.currentIndex === 'number') {
             currentQuestionIndex.value = wrongState.currentIndex
           }
-        } catch { /* 忽略损坏的数据 */ }
+        } catch {
+          blockedSessions.add(wrongStateKey.value)
+          showToast('错题练习进度损坏，原数据已保留；请明确清空答题记录后再保存新进度。')
+        }
       }
     } else if (mode === 'specialize') {
       if (specializeTypes.value.length === 0 && !pushState) {
@@ -322,11 +344,10 @@ export function useQuiz() {
           : getQuestionsByTypes(specializeTypes.value, [...questions.value]).sort((a, b) => a.number - b.number),
       )
     } else {
-      // exam / endorse
-      answerSheet.value.clear()
-      currentQuestionIndex.value = 0
-      temp = shuffleArray([...questions.value])
-      if (mode === 'exam' && temp.length > 60) temp = temp.slice(0, 60)
+      temp = restoreOrBuild(mode + '_session_' + currentBankFile.value, () => {
+        const selected = shuffleArray([...questions.value])
+        return mode === 'exam' ? selected.slice(0, 60) : selected
+      })
     }
 
     // 仅对练习/专项模式兜底：筛选后无题目时回退到全部题目。
@@ -338,6 +359,8 @@ export function useQuiz() {
     }
 
     shuffledQuestions.value = temp
+    const restoredIndex = Number.isInteger(currentQuestionIndex.value) ? currentQuestionIndex.value : 0
+    currentQuestionIndex.value = Math.max(0, Math.min(restoredIndex, temp.length - 1))
     appMode.value = mode
     nextTick(() => window.scrollTo(0, 0))
   }
@@ -352,6 +375,8 @@ export function useQuiz() {
     }
     try {
       const state = JSON.parse(raw)
+      if (state.schemaVersion !== undefined && state.schemaVersion !== 2) throw new Error('不支持的进度版本')
+      if (!Array.isArray(state.answers) || !Array.isArray(state.order)) throw new Error('进度结构错误')
       answerSheet.value = state.answers ? deserializeAnswerSheet(state.answers) : new Map()
       if (state.order && Array.isArray(state.order)) {
         const qMap = new Map(questions.value.map((q) => [q.number, q]))
@@ -359,6 +384,8 @@ export function useQuiz() {
           .map((n: number) => qMap.get(n))
           .filter(Boolean) as Question[]
         if (qs.length > 0) {
+          const validNumbers = new Set(qs.map(question => question.number))
+          answerSheet.value = new Map([...answerSheet.value].filter(([number]) => validNumbers.has(number)))
           currentQuestionIndex.value = typeof state.currentIndex === 'number' ? state.currentIndex : 0
           return qs
         }
@@ -367,7 +394,8 @@ export function useQuiz() {
       currentQuestionIndex.value = 0
       return buildFn()
     } catch {
-      localStorage.removeItem(key)
+      blockedSessions.add(key)
+      showToast('练习进度损坏，原数据已保留；当前可临时练习，请导出备份或明确重置后再保存。')
       answerSheet.value.clear()
       currentQuestionIndex.value = 0
       return buildFn()
@@ -402,59 +430,50 @@ export function useQuiz() {
           userAnswer: entry.userAnswer,
           isCorrect: entry.isCorrect,
           showResult: entry.showResult,
+          subDrafts: entry.subDrafts,
         })
       }
     }
     return map
   }
 
+  const blockedSessions = new Set<string>()
   let sessionSaveTimer: ReturnType<typeof setTimeout> | null = null
+  function sessionKey() {
+    const mode = appMode.value
+    if (mode === 'practice') return practiceStateKey.value
+    if (mode === 'wrong') return wrongStateKey.value
+    if (mode === 'specialize') return 'specialize_session_' + currentBankFile.value + '_' + [...specializeTypes.value].sort().join('_')
+    if (mode === 'exam' || mode === 'endorse') return mode + '_session_' + currentBankFile.value
+    return null
+  }
+  function saveBrowserSession() {
+    const key = sessionKey()
+    if (!key || blockedSessions.has(key) || localStorage.getItem('exam-restore-pending')) return
+    try {
+      localStorage.setItem(key, JSON.stringify({
+        schemaVersion: 2, appVersion: '0.2.0', savedAt: Date.now(),
+        bankFile: currentBankFile.value,
+        answers: serializeAnswerSheet(answerSheet.value),
+        currentIndex: currentQuestionIndex.value,
+        order: appMode.value === 'wrong' ? [] : shuffledQuestions.value.map(q => q.number),
+      }))
+    } catch (error) { showToast('练习进度保存失败，请检查存储空间并及时备份：' + String(error)) }
+  }
   function scheduleSessionSave() {
+    saveBrowserSession()
     if (sessionSaveTimer) clearTimeout(sessionSaveTimer)
     sessionSaveTimer = setTimeout(() => {
-      const sheet = answerSheet.value
-      const mode = appMode.value
-      if (mode !== 'practice' && mode !== 'specialize' && mode !== 'wrong') return
-      const state = {
-        answers: serializeAnswerSheet(sheet),
-        currentIndex: currentQuestionIndex.value,
-        order: mode === 'wrong' ? [] : shuffledQuestions.value.map((q) => q.number),
-      }
-      if (mode === 'practice') {
-        localStorage.setItem(practiceStateKey.value, JSON.stringify(state))
-      } else if (mode === 'specialize') {
-        const key = `specialize_session_${currentBankFile.value}_${[...specializeTypes.value].sort().join('_')}`
-        localStorage.setItem(key, JSON.stringify(state))
-      } else if (mode === 'wrong') {
-        localStorage.setItem(wrongStateKey.value, JSON.stringify(state))
-      }
       sessionSaveTimer = null
+      void persistLearningState().catch(() => { /* The global save-error handler reports failures. */ })
     }, 500)
   }
-
-  /** 立即落盘（页面回退/卸载时调用，防止 debounce 延迟导致数据丢失） */
   function flushSessionSave() {
-    if (sessionSaveTimer) {
-      clearTimeout(sessionSaveTimer)
-      sessionSaveTimer = null
-    }
-    const sheet = answerSheet.value
-    const mode = appMode.value
-    if (mode !== 'practice' && mode !== 'specialize' && mode !== 'wrong') return
-    const state = {
-      answers: serializeAnswerSheet(sheet),
-      currentIndex: currentQuestionIndex.value,
-      order: mode === 'wrong' ? [] : shuffledQuestions.value.map((q) => q.number),
-    }
-    if (mode === 'practice') {
-      localStorage.setItem(practiceStateKey.value, JSON.stringify(state))
-    } else if (mode === 'specialize') {
-      const key = `specialize_session_${currentBankFile.value}_${[...specializeTypes.value].sort().join('_')}`
-      localStorage.setItem(key, JSON.stringify(state))
-    } else if (mode === 'wrong') {
-      localStorage.setItem(wrongStateKey.value, JSON.stringify(state))
-    }
+    if (sessionSaveTimer) { clearTimeout(sessionSaveTimer); sessionSaveTimer = null }
+    saveBrowserSession()
+    void persistLearningState().catch(() => { /* The global save-error handler reports failures. */ })
   }
+  function saveWhenHidden() { if (document.visibilityState === 'hidden') flushSessionSave() }
 
   // ── 错题条目监听（增量更新） ──
   watch(
@@ -501,11 +520,11 @@ export function useQuiz() {
     let user = Array.isArray(ua) ? (ua as string[]).join('') : String(ua)
     if (q.answerFormat === 'markdown') { correct = stripMarkdown(correct); user = stripMarkdown(user) }
     switch (q.type) {
-      case '多选题': return (ua as string[]).sort().join('') === q.answer.split('').sort().join('')
+      case '多选题': return [...(Array.isArray(ua) ? ua : String(ua).split(''))].sort().join('') === q.answer.split('').sort().join('')
       case '填空题':
         if (q.answerDetail?.accepts?.length) {
           const trimmed = user.trim().toLowerCase()
-          return q.answerDetail.accepts.some(a => a.trim().toLowerCase() === trimmed)
+          return q.answerDetail.accepts.some(answer => (q.answerFormat === 'markdown' ? stripMarkdown(answer) : answer).trim().toLowerCase() === trimmed)
         }
         return user.trim().toLowerCase() === correct.trim().toLowerCase()
       case '程序分析题': return user.trim() === correct.trim()
@@ -541,6 +560,8 @@ export function useQuiz() {
 
   // ── 子题判分（根据子题类型） ──
   function checkSubAnswer(sub: SubQuestion, ua: string): boolean {
+    const correct = sub.answerFormat === 'markdown' ? stripMarkdown(sub.answer) : sub.answer
+    const user = sub.answerFormat === 'markdown' ? stripMarkdown(ua) : ua
     if (!ua || !ua.trim()) return false
     const subType = sub.type || '文本题'
     switch (subType) {
@@ -550,12 +571,12 @@ export function useQuiz() {
         return ua.split('').sort().join('') === sub.answer.split('').sort().join('')
       case '填空题':
         if (sub.answerDetail?.accepts?.length) {
-          const trimmed = ua.trim().toLowerCase()
-          return sub.answerDetail.accepts.some(a => a.trim().toLowerCase() === trimmed)
+          const trimmed = user.trim().toLowerCase()
+          return sub.answerDetail.accepts.some(answer => (sub.answerFormat === 'markdown' ? stripMarkdown(answer) : answer).trim().toLowerCase() === trimmed)
         }
-        return ua.trim().toLowerCase() === sub.answer.trim().toLowerCase()
+        return user.trim().toLowerCase() === correct.trim().toLowerCase()
       default: // 文本题
-        return ua.trim().toLowerCase() === sub.answer.trim().toLowerCase() && ua.trim() !== ''
+        return user.trim().toLowerCase() === correct.trim().toLowerCase() && user.trim() !== ''
     }
   }
 
@@ -577,6 +598,20 @@ export function useQuiz() {
     scheduleSessionSave()
   }
 
+  function handleSubAnswerUpdate(q: Question, subId: number, answer: string) {
+    if (appMode.value === 'endorse' || !q.subQuestions?.some(sub => sub.id === subId)) return
+    const old = answerSheet.value.get(q.number)
+    if (old?.subAnswers?.has(subId)) return
+    answerSheet.value.set(q.number, {
+      userAnswer: old?.userAnswer ?? null,
+      isCorrect: old?.isCorrect ?? null,
+      showResult: old?.showResult ?? false,
+      subAnswers: old?.subAnswers,
+      subDrafts: { ...old?.subDrafts, [subId]: answer },
+    })
+    scheduleSessionSave()
+  }
+
   function handleSubSubmit(q: Question, subId: number, ua: string) {
     const subs = q.subQuestions || []
     const sub = subs.find((s) => s.id === subId)
@@ -593,16 +628,24 @@ export function useQuiz() {
       isCorrect: map.size === subs.length ? cc === subs.length : null,
       showResult: old?.showResult || false,
       subAnswers: map,
+      subDrafts: old?.subDrafts,
     })
     scheduleSessionSave()
   }
 
   function submitExam() {
+    if (appMode.value !== 'exam') return
     let final = 0
     for (const q of shuffledQuestions.value) {
       const entry = answerSheet.value.get(q.number)
       if (q.subQuestions?.length) {
-        const sa = entry?.subAnswers
+        const sa = new Map(entry?.subAnswers)
+        for (const sub of q.subQuestions) {
+          const draft = entry?.subDrafts?.[sub.id]
+          if (!sa.has(sub.id) && draft?.trim()) {
+            sa.set(sub.id, { userAnswer: draft, isCorrect: checkSubAnswer(sub, draft) })
+          }
+        }
         let cc = 0
         if (sa) for (const s of q.subQuestions) { if (sa.get(s.id)?.isCorrect === true) cc++ }
         if (!sa || sa.size === 0) {
@@ -611,7 +654,7 @@ export function useQuiz() {
           if (ok) final++
         } else {
           answerSheet.value.set(q.number, { userAnswer: entry?.userAnswer ?? `复合题: ${cc}/${q.subQuestions.length} 正确`, isCorrect: cc === q.subQuestions.length, showResult: true, subAnswers: sa })
-          final += cc
+          if (cc === q.subQuestions.length) final++
         }
       } else {
         // 简答题不评判，不纳入分数
@@ -622,7 +665,9 @@ export function useQuiz() {
       }
     }
     score.value = final
+    localStorage.removeItem('exam_session_' + currentBankFile.value)
     appMode.value = 'review'
+    void persistLearningState().catch(() => {})
   }
 
   // ── 工具栏操作 ──
@@ -659,9 +704,11 @@ export function useQuiz() {
   async function handleClearPractice() {
     const resetOk = await showConfirm('确定要重置当前做题进度吗？所有答题记录将被清空，题目顺序将重置。')
     if (!resetOk) return
+    blockedSessions.delete(practiceStateKey.value)
     localStorage.removeItem(practiceStateKey.value)
     if (appMode.value === 'specialize') {
       const key = `specialize_session_${currentBankFile.value}_${[...specializeTypes.value].sort().join('_')}`
+      blockedSessions.delete(key)
       localStorage.removeItem(key)
     }
     // 清除当前题库的活跃错题本标记，使下次「添加到错题本」新建一个错题本，
@@ -679,10 +726,15 @@ export function useQuiz() {
       shuffledQuestions.value = [...questions.value].sort((a, b) => a.number - b.number)
     }
     score.value = 0
+    scheduleSessionSave()
     window.scrollTo(0, 0)
   }
 
   function handleAddToWrongBook() {
+    if (appMode.value === 'wrong') {
+      handleAddToNewWrongBook()
+      return
+    }
     let count = 0
     let skippedExisting = 0
     let skippedCorrect = 0
@@ -726,6 +778,33 @@ export function useQuiz() {
     showToast(parts.join('。') + '。')
   }
 
+  function handleAddToNewWrongBook() {
+    const bankFile = currentBankFile.value
+    const source = quizStore.getActiveNotebook(bankFile)
+    if (!source) return
+    const wrongNumbers = new Set(shuffledQuestions.value.filter(q => {
+      const entry = answerSheet.value.get(q.number)
+      return entry?.isCorrect === false ||
+        (entry?.subAnswers && [...entry.subAnswers.values()].some(sub => sub.isCorrect === false))
+    }).map(q => q.number))
+    if (wrongNumbers.size === 0) {
+      showToast('本轮还没有再次答错的题目，请先答题后再添加。')
+      return
+    }
+
+    const baseName = `${source.name} · 再练错题`
+    const names = new Set(quizStore.getNotebooksByBank(bankFile).map(nb => nb.name))
+    let name = baseName
+    for (let suffix = 2; names.has(name); suffix++) name = `${baseName} (${suffix})`
+    const notebook = quizStore.createNotebook(name, bankFile)
+    for (const number of wrongNumbers) {
+      quizStore.addWrongEntryToNotebook(number, bankFile, notebook.id)
+    }
+    // Creating a notebook activates it; keep the current practice bound to its source.
+    quizStore.setActiveNotebook(bankFile, source.id)
+    showToast(`已将 ${wrongNumbers.size} 道再次答错的题目添加到新错题本「${name}」。原错题本保持不变，可返回错题本列表开始新一轮练习。`)
+  }
+
   async function handleClearWrong() {
     const clearOk = await showConfirm('确定要清空当前题库的所有错题吗？此操作不可恢复。')
     if (!clearOk) return
@@ -742,6 +821,7 @@ export function useQuiz() {
     if (!resetOk) return
     answerSheet.value.clear()
     currentQuestionIndex.value = 0
+    blockedSessions.delete(wrongStateKey.value)
     localStorage.removeItem(wrongStateKey.value)
     window.scrollTo(0, 0)
   }
@@ -838,11 +918,17 @@ export function useQuiz() {
   }
 
   // ── 从文件导入外部题库 ──
+  let importingBank = false
   async function persistImportedBank(content: string, name: string) {
-    const normalized = normalizeQuestionBank(JSON.parse(content), name)
-    if (!normalized.length) throw new Error('文件中没有有效的题目数据')
-    const bankName = name.replace(/\.json$/i, '') || 'Imported bank'
-    await saveGeneratedBank(bankName, 'import-' + crypto.randomUUID(), content, [])
+    if (importingBank) return
+    importingBank = true
+    try {
+      const preview = inspectBank(content, name)
+      if (preview.issues.length) throw new Error(bankIssueReport(preview))
+      const types = Object.entries(preview.types).map(([type, count]) => type + ' ' + count).join('、')
+      if (!await showConfirm('导入预览：' + name + '\n' + preview.questions.length + ' 道题 · ' + preview.imageCount + ' 张引用图片\n' + types + '\n图片须已在图库中或内嵌。确认保存？原文件不修改，同名不覆盖。')) return
+      await savePublicBank(name.replace(/\.json$/i, '') || 'Imported bank', 'import-' + crypto.randomUUID(), preview.content, [], true, 'import')
+    } finally { importingBank = false }
   }
 
   function handleExternalBankFileImport(event: Event) {
@@ -883,95 +969,13 @@ export function useQuiz() {
     }
   }
 
-  // ── 跳转 & 滚动追踪 ──
-  // 跳转滚动期间抑制 handleQuizScroll，避免窗口化渲染的高度突变
-  // 导致 currentQuestionIndex 被改回、窗口移走、目标题变回占位符的死循环。
-  let isJumpScrolling = false
-  let jumpScrollTimer: ReturnType<typeof setTimeout> | null = null
-
-  async function handleJumpTo(index: number, isDarkMode: boolean) {
+  // Navigation only changes session state; each presentation owns scrolling.
+  function handleJumpTo(index: number) {
+    if (!Number.isInteger(index) || index < 0 || index >= shuffledQuestions.value.length) return
     currentQuestionIndex.value = index
     scheduleSessionSave()
-    const q = shuffledQuestions.value[index]
-    if (!q) return
-
-    // 进入跳转滚动锁：期间 handleQuizScroll 不更新 currentQuestionIndex
-    isJumpScrolling = true
-    if (jumpScrollTimer) { clearTimeout(jumpScrollTimer); jumpScrollTimer = null }
-
-    await nextTick()
-    // 再等一帧，确保窗口化渲染切换（占位符↔QuestionDisplay）后浏览器完成布局
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-
-    const el = document.getElementById('q-' + q.number)
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      el.style.transition = 'background-color 0.5s ease'
-      el.style.backgroundColor = isDarkMode ? '#2a3a4a' : '#f8f9fa'
-      setTimeout(() => { el.style.backgroundColor = '' }, 500)
-    }
-
-    // 平滑滚动动画结束后释放锁（~300-500ms，给 650ms 保险）
-    jumpScrollTimer = setTimeout(() => {
-      isJumpScrolling = false
-      jumpScrollTimer = null
-    }, 650)
   }
 
-  let scrollTick: number | null = null
-  function handleQuizScroll() {
-    if (isJumpScrolling) return
-    if (scrollTick !== null) return
-    scrollTick = requestAnimationFrame(() => {
-      scrollTick = null
-      const els = document.querySelectorAll('.question-list-item')
-      if (els.length === 0) return
-      const viewportTop = window.scrollY + window.innerHeight * 0.2
-      let bestIdx = currentQuestionIndex.value
-      let bestDist = Infinity
-      els.forEach((el) => {
-        const rect = el.getBoundingClientRect()
-        const elTop = rect.top + window.scrollY
-        const dist = Math.abs(elTop - viewportTop)
-        if (dist < bestDist) {
-          bestDist = dist
-          const qNum = parseInt(el.id.replace('q-', ''))
-          const idx = shuffledQuestions.value.findIndex((q) => q.number === qNum)
-          if (idx >= 0) bestIdx = idx
-        }
-      })
-      if (bestIdx !== currentQuestionIndex.value) {
-        currentQuestionIndex.value = bestIdx
-      }
-    })
-  }
-
-  function startScrollTracking() {
-    window.addEventListener('scroll', handleQuizScroll, { passive: true })
-  }
-
-  function stopScrollTracking() {
-    window.removeEventListener('scroll', handleQuizScroll)
-    if (scrollTick !== null) {
-      cancelAnimationFrame(scrollTick)
-      scrollTick = null
-    }
-    if (jumpScrollTimer) {
-      clearTimeout(jumpScrollTimer)
-      jumpScrollTimer = null
-    }
-    isJumpScrolling = false
-  }
-
-  watch([() => appMode.value, () => shuffledQuestions.value], ([mode]) => {
-    if (QUIZ_MODES.includes(mode as typeof QUIZ_MODES[number])) {
-      nextTick(() => startScrollTracking())
-    } else {
-      stopScrollTracking()
-    }
-  })
-
-  // ── 浏览器导航 ──
   function handlePopState(event: PopStateEvent) {
     if (!event.state?.mode) { appMode.value = 'start'; return }
     if (event.state.mode === 'start') { appMode.value = 'start'; return }
@@ -1030,6 +1034,8 @@ export function useQuiz() {
   }
 
   onMounted(async () => {
+    window.addEventListener('pagehide', flushSessionSave)
+    document.addEventListener('visibilitychange', saveWhenHidden)
     window.addEventListener(PUBLIC_BANKS_CHANGED, handlePublicBankChange)
     window.addEventListener(GENERATED_BANKS_CHANGED, handleGeneratedBankChange)
     await quizStore.persistedDataReady
@@ -1038,11 +1044,12 @@ export function useQuiz() {
   })
 
   onUnmounted(() => {
+    window.removeEventListener('pagehide', flushSessionSave)
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', saveWhenHidden)
     window.removeEventListener(PUBLIC_BANKS_CHANGED, handlePublicBankChange)
     flushSessionSave()
     window.removeEventListener('popstate', handlePopState)
     window.removeEventListener(GENERATED_BANKS_CHANGED, handleGeneratedBankChange)
-    stopScrollTracking()
   })
 
   // ── 返回 ──
@@ -1055,7 +1062,7 @@ export function useQuiz() {
     totalQuestions, wrongCount, allBanks,
     // actions
     loadQuestions, refreshBanks, handleBankChange, handleBackToHome, handleStartGame, handleStartSpecialize,
-    handleAnswerUpdate, handleSubmit, handleCompoundSubmit, handleSubSubmit, submitExam,
+    handleAnswerUpdate, handleSubmit, handleCompoundSubmit, handleSubSubmit, handleSubAnswerUpdate, submitExam,
     handleToggleShuffle, handleClearPractice, handleAddToWrongBook, handleClearWrong,
     handleClearWrongAnswers,
     exportWrongQuestions, importWrongQuestions, handleFileImport, handleJumpTo,

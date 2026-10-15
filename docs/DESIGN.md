@@ -2,7 +2,11 @@
 
 > 文档版本：1.0  
 > 生成日期：2026-09-19  
+> 更新日期：2026-10-14
+>
 > 适用项目：Vue 3 + TypeScript + Vite + Tauri 2 刷题助手
+
+v0.1 已完成收尾验收，下一次发布进入 v0.2.0。本文维护设计与实现边界，当前任务以 [产品路线与 TODO](ROADMAP_0.2_TO_1.0.md) 为准；完成记录见 [v0.1 归档](V0.1_CLOSEOUT.md)。
 
 ## 1. 文档目的
 
@@ -30,7 +34,7 @@
 - 多用户账号、云端同步和权限系统；
 - 在线协作编辑题库；
 - 服务端自动判定开放式简答题；
-- 在运行时修改已打包的内置题库清单；
+- 在安装目录中维护或修改题库（正式版只使用用户数据目录）；
 - 代替完整的题库内容管理后台。
 
 ## 3. 技术与运行平台
@@ -54,10 +58,10 @@ Web 版以静态站点方式运行。题库和图片由部署站点的 `subjects
 桌面版使用 Tauri 2：
 
 - 开发环境的内置资源位于 `public/subjects/` 和 `public/images/`；
-- 正式构建由 `scripts/prepare-public-build.mjs` 清理私人题库、图片和错题数据，只把脱敏资源放入安装包；
+- 正式构建由 `scripts/prepare-public-build.mjs` 清理私人题库、图片和错题数据；前端静态资源内嵌在程序中，不额外释放 `public` 目录；
 - 安装版用户资源位于 `%LOCALAPPDATA%/com.exam.assistant/content/subjects/` 和 `%LOCALAPPDATA%/com.exam.assistant/content/images/`；
 - 设置页按钮在 Tauri 开发版打开项目 `public` 子目录，在安装版打开用户 `content` 子目录；
-- 安装目录中的内置资源只读。用户手动放置、应用导入和 AI 转换生成的资源必须写入用户目录。
+- 正式版只读取用户目录中的题库。用户手动放置、应用导入和 AI 转换生成的资源均写入用户目录；测试用独立 EXE 也使用相同目录，不实现独立的便携存储。
 
 ## 4. 总体架构
 
@@ -134,8 +138,8 @@ start
 
 | 操作 | Web | Tauri 开发版 | Tauri 安装版 |
 | --- | --- | --- | --- |
-| 打开题库位置 | 打开当前部署的 `subjects/banks.json` | 打开项目 `public/subjects` | 打开安装资源 `public/subjects` |
-| 打开题库图库 | 打开当前部署的 `images/README.md` | 打开项目 `public/images` | 打开安装资源 `public/images` |
+| 打开题库位置 | 打开当前部署的 `subjects/banks.json` | 打开项目 `public/subjects` | 打开用户 `content/subjects` |
+| 打开题库图库 | 打开当前部署的 `images/README.md` | 打开项目 `public/images` | 打开用户 `content/images` |
 
 按钮执行期间禁用重复点击，并在卡片内显示成功或错误反馈。
 
@@ -302,7 +306,7 @@ PlantUML 源码可能发送到设置中的远程 Server。包含敏感信息的�
 - 安装版：将题库和图片放入设置页打开的用户 `content/subjects/`、`content/images/`；
 - 应用内导入和 AI 转换：由应用自动保存到当前环境的可写资源目录。
 
-内置题库来自安装资源目录，列表中的 `deletable` 标志决定是否允许删除；不要通过修改安装目录来管理用户题库。
+正式版不扫描安装资源目录。用户目录中的题库可删除，开发版还会列出可删除的项目题库；列表中的 `deletable` 标志决定是否允许删除。
 
 ### 10.2 外部链接
 
@@ -326,14 +330,9 @@ images
 
 ### 10.4 打包资源
 
-`src-tauri/tauri.conf.json` 将：
+`src-tauri/tauri.conf.json` 不配置外置 `bundle.resources`，安装包不释放 `public` 文件夹。Vite 仍使用 `.tmp-build/public` 作为脱敏的前端静态资源输入，构建出的界面、配置和字体由 Tauri 内嵌；这与安装时额外复制资源目录不同。
 
-```text
-../public/subjects/ -> $RESOURCE/public/subjects
-../public/images/   -> $RESOURCE/public/images
-```
-
-打包副本用于“查看内置资源”。它不是运行时在线编辑系统；正式修改仍应回到项目源目录并重新构建。
+正式版的题库和图片只读写用户 `content` 目录，不依赖安装目录的资源文件。旧安装可能残留 `public`，新程序不再扫描它；不会自动删除旧目录，以免删除用户自行放置的数据。
 
 ## 11. 性能设计
 
@@ -414,7 +413,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 - 设置页存在“打开题库位置”和“打开题库图库”两个按钮；
 - Web 点击后打开当前部署携带的离线资源，不访问 GitHub 等外部网站；
 - Tauri 开发版点击后打开项目 `public` 下对应目录；
-- Tauri 安装版点击后打开安装位置对应的 `public` 资源目录；
+- Tauri 安装版点击后打开当前用户 `content` 下对应目录；
 - 不支持的位置参数会被 Rust 命令拒绝；
 - 执行成功和失败均有明确反馈。
 

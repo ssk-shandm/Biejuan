@@ -1,7 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { usePlatform } from '../composables/usePlatform'
 import type { DocumentImageAsset } from '../utils/documentAssets'
-import { normalizeQuestionBank } from '../utils/questionSchema'
+import { inspectBank, bankIssueReport } from '../utils/bankImport'
+import { readBankSources, rememberBankSource, type BankSource } from './bankSources'
 import { deleteGeneratedBanks, listGeneratedBanks, readStoredGeneratedBank, saveGeneratedBank } from './generatedBankStorage'
 
 export const PUBLIC_BANKS_CHANGED = 'public-banks-changed'
@@ -24,10 +25,13 @@ async function imageToBase64(blob: Blob): Promise<string> {
   })
 }
 
-export async function savePublicBank(name: string, directory: string, content: string, images: Pick<DocumentImageAsset, 'fileName' | 'blob'>[], notify = true): Promise<PublicBankSaveResult> {
-  if (!normalizeQuestionBank(JSON.parse(content), name).length) throw new Error('题库中没有有效题目')
+export async function savePublicBank(name: string, directory: string, content: string, images: Pick<DocumentImageAsset, 'fileName' | 'blob'>[], notify = true, source: BankSource = 'ai'): Promise<PublicBankSaveResult> {
+  if (localStorage.getItem('exam-restore-pending')) throw new Error('正在恢复学习数据，请完成恢复后再保存题库。转换结果请先导出保管。')
+  const inspection = inspectBank(content, name)
+  if (inspection.issues.length) throw new Error(bankIssueReport(inspection))
   if (!canWritePublicBank()) {
     const file = await saveGeneratedBank(name, directory, content, images)
+    rememberBankSource(file, source)
     return { file, location: '应用内存储（此运行环境无法写入本地 public 目录）' }
   }
   const payload = {
@@ -45,6 +49,7 @@ export async function savePublicBank(name: string, directory: string, content: s
     if (!response.ok) throw new Error(data.message || `保存题库失败（HTTP ${response.status}）`)
     result = data as PublicBankSaveResult
   }
+  rememberBankSource(result.file, source)
   if (notify) window.dispatchEvent(new CustomEvent<string>(PUBLIC_BANKS_CHANGED, { detail: result.file }))
   return result
 }
@@ -58,9 +63,13 @@ export function migrateGeneratedBanksToPublic(): Promise<string[]> {
     const warnings: string[] = []
     for (const entry of await listGeneratedBanks()) {
       try {
+        // Keep established identities until a future stable-ID migration can move every reference.
+        const hasHistory = Object.keys(localStorage).some(key => key.includes(entry.file))
+          || (localStorage.getItem('wrongNotebookData_v2') ?? '').includes(JSON.stringify(entry.file))
+        if (hasHistory) continue
         const bank = await readStoredGeneratedBank(entry.file)
         const directory = decodeURIComponent(entry.file.slice('generated:'.length))
-        const result = await savePublicBank(bank.name, directory, bank.content, bank.images, false)
+        const result = await savePublicBank(bank.name, directory, bank.content, bank.images, false, readBankSources()[entry.file] ?? 'legacy')
         if (localStorage.getItem('lastBank') === entry.file) localStorage.setItem('lastBank', result.file)
         await deleteGeneratedBanks([entry.file], false)
       } catch (error) {

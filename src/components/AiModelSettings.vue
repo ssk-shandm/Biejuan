@@ -6,10 +6,6 @@
         <h3>AI 模型设置</h3>
         <p>连接参数保存在当前会话中，运行配置通过外部文本文件管理。</p>
       </div>
-      <span class='framework-state' :class='frameworkStatus'>
-        <span class='state-dot' aria-hidden='true'></span>
-        {{ frameworkStatusText }}
-      </span>
     </div>
 
     <div class='settings-card'>
@@ -109,13 +105,10 @@ const isDropdownOpen = ref(false)
 const dropdownRef = ref<HTMLElement | null>(null)
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
-const frameworkStatus = ref<'loading' | 'ready' | 'error'>('loading')
-const frameworkError = ref('')
 
 const apiKeyInputType = computed(() => showApiKey.value ? 'text' : 'password')
 const endpointPreview = computed(() => provider.baseUrl.trim() ? buildChatCompletionsEndpoint(provider.baseUrl) : '请输入 API 基础地址')
 const isDesktopConfig = computed(() => configBackend.value === 'tauri')
-const frameworkStatusText = computed(() => frameworkStatus.value === 'ready' ? '提示词与结构已就绪' : frameworkStatus.value === 'error' ? frameworkError.value || '框架加载失败' : '正在加载框架')
 
 function handleOutsideClick(event: MouseEvent) {
   if (dropdownRef.value && !dropdownRef.value.contains(event.target as Node)) isDropdownOpen.value = false
@@ -125,11 +118,8 @@ onMounted(async () => {
   document.addEventListener('click', handleOutsideClick)
   try {
     await loadLlmProviderSettings()
-    frameworkStatus.value = 'ready'
   } catch (error) {
-    frameworkStatus.value = 'error'
-    frameworkError.value = error instanceof Error ? error.message : '无法读取模型设置。'
-    showMessage(frameworkError.value, 'error')
+    showMessage(error instanceof Error ? error.message : '无法读取模型设置。', 'error')
   }
 })
 
@@ -261,10 +251,6 @@ function showMessage(text: string, type: 'success' | 'error') {
 h3 { margin: 0; font-size: 1.15rem; }
 .intro-card p, .card-heading p { margin: 7px 0 0; color: var(--color-text-muted); line-height: 1.65; }
 code { font-family: Consolas, 'Courier New', monospace; font-size: .88em; }
-.framework-state, .backend-badge { display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto; border: 1px solid var(--color-border-divider); border-radius: 999px; padding: 7px 10px; background: var(--color-bg-container); color: var(--color-text-muted); font-size: .75rem; }
-.state-dot { width: 7px; height: 7px; border-radius: 50%; background: #d49a23; }
-.framework-state.ready .state-dot { background: #27ae60; }
-.framework-state.error .state-dot { background: #e74c3c; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; margin-top: 22px; }
 .wide-field { grid-column: 1 / -1; }
 .field { min-width: 0; display: flex; flex-direction: column; gap: 7px; font-size: .84rem; font-weight: 600; }
@@ -307,7 +293,6 @@ code { font-family: Consolas, 'Courier New', monospace; font-size: .88em; }
 @media (max-width: 620px) {
   .settings-card { padding: 18px; }
   .intro-card, .card-heading, .actions { align-items: stretch; flex-direction: column; }
-  .framework-state, .backend-badge { align-self: flex-start; }
   .form-grid { grid-template-columns: 1fr; }
   .wide-field { grid-column: auto; }
 }

@@ -22,7 +22,6 @@
     key="wrong-manage"
     :notebooks="currentBankNotebooks"
     :active-id="activeNotebookForBank"
-    :active-notebook="activeNotebookForBankObj"
     :bank-name="currentBankName"
     :total-entry-count="wrongCount"
     :entry-counts="notebookEntryCounts"
@@ -33,8 +32,6 @@
     @start-practice="emit('startPractice', $event)"
     @delete="emit('deleteNotebook', $event)"
     @rename="(id: string, name: string) => emit('renameNotebook', id, name)"
-    @backup-all="emit('backupAll')"
-    @restore-all="emit('restoreAll', $event)"
   />
 
   <QuizSessionView
@@ -64,6 +61,7 @@
     @submit="emit('submit', $event)"
     @compound-submit="(question, answers) => emit('compoundSubmit', question, answers)"
     @sub-submit="(question, subId, answer) => emit('subSubmit', question, subId, answer)"
+    @sub-answer-update="(question, subId, answer) => emit('subAnswerUpdate', question, subId, answer)"
     @submit-exam="emit('submitExam')"
   />
 
@@ -95,7 +93,6 @@ defineProps<{
   availableQuestionTypes: string[]
   currentBankNotebooks: WrongNotebook[]
   activeNotebookForBank?: string
-  activeNotebookForBankObj: WrongNotebook | null
   currentBankName: string
   wrongCount: number
   notebookEntryCounts: Record<string, number>
@@ -125,8 +122,6 @@ const emit = defineEmits<{
   (event: 'startPractice', id: string): void
   (event: 'deleteNotebook', id: string): void
   (event: 'renameNotebook', id: string, name: string): void
-  (event: 'backupAll'): void
-  (event: 'restoreAll', fileEvent: Event): void
   (event: 'resetError'): void
   (event: 'jumpTo', index: number): void
   (event: 'clearWrong'): void
@@ -138,6 +133,7 @@ const emit = defineEmits<{
   (event: 'submit', question: Question): void
   (event: 'compoundSubmit', question: Question, answers: Map<number, SubAnswer>): void
   (event: 'subSubmit', question: Question, subId: number, answer: string): void
+  (event: 'subAnswerUpdate', question: Question, subId: number, answer: string): void
   (event: 'submitExam'): void
 }>()
 </script>

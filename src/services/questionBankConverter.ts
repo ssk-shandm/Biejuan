@@ -85,7 +85,8 @@ const text = (value: unknown) => (value == null ? '' : String(value)).trim()
 const hasMarkdown = (...values: unknown[]) => values.some((value) => typeof value === 'string' && (value.includes('```') || /^\s*\|.+\|\s*$/m.test(value)))
 
 function resolveFieldFormat(value: unknown, content: unknown, fallback: ContentFormat): ContentFormat {
-  return normalizeContentFormat(value, hasMarkdown(content) ? 'markdown' : fallback)
+  const format = normalizeContentFormat(value, hasMarkdown(content) ? 'markdown' : fallback)
+  return format === 'text' ? 'markdown' : format
 }
 
 function markdownContent(value: string, format: ContentFormat): string {
@@ -259,7 +260,8 @@ function normalizeSubQuestion(raw: unknown, index: number, parentFormat: Content
   const content = text(raw.content ?? raw.question ?? raw.stem)
   if (!content) return undefined
   const answer = answerFor(type, raw.answer, options)
-  const format = normalizeContentFormat(raw.format, hasMarkdown(content, ...Object.values(options)) ? 'markdown' : parentFormat)
+  const rawFormat = normalizeContentFormat(raw.format, hasMarkdown(content, ...Object.values(options)) ? 'markdown' : parentFormat)
+  const format = rawFormat === 'text' ? 'markdown' : rawFormat
   const record: QuestionRecord = { id: index + 1, type, content, answer, format }
   if (Object.keys(options).length) record.options = options
   record.answerFormat = resolveFieldFormat(raw.answerFormat, answer, raw.format == null ? parentAnswerFormat : inheritedContentFormat(format))
@@ -279,9 +281,10 @@ function normalizeModelQuestion(raw: unknown, knownImages: Set<string>): Draft |
     content = scenario
     scenario = ''
   }
-  const format = normalizeContentFormat(source.format, hasMarkdown(content, ...Object.values(options)) ? 'markdown' : 'text')
+  const rawFormat = normalizeContentFormat(source.format)
+  const format = rawFormat === 'text' ? 'markdown' : rawFormat
   const inheritedFormat = inheritedContentFormat(format)
-  const parentAnswerFormat = normalizeContentFormat(source.answerFormat, inheritedFormat)
+  const parentAnswerFormat = resolveFieldFormat(source.answerFormat, source.answer, inheritedFormat)
   const subQuestions = Array.isArray(source.subQuestions)
     ? source.subQuestions.map((sub, index) => normalizeSubQuestion(sub, index, inheritedFormat, parentAnswerFormat)).filter((item): item is QuestionRecord => Boolean(item))
     : []
@@ -313,9 +316,9 @@ function normalizeModelQuestion(raw: unknown, knownImages: Set<string>): Draft |
   if (images.length && /^[\s(（]*(?:\d{1,4}\s*[.、．:：)）]?|题干缺失)?[\s)）]*$/.test(String(record.content))) record.content = '（题目见图）'
 
   record.format = format
-  record.answerFormat = normalizeContentFormat(source.answerFormat, hasMarkdown(answer) ? 'markdown' : inheritedFormat)
-  if (explanation) record.explanationFormat = normalizeContentFormat(source.explanationFormat, hasMarkdown(explanation) ? 'markdown' : inheritedFormat)
-  if (scenario) record.scenarioFormat = normalizeContentFormat(source.scenarioFormat, hasMarkdown(scenario) ? 'markdown' : inheritedFormat)
+  record.answerFormat = resolveFieldFormat(source.answerFormat, answer, inheritedFormat)
+  if (explanation) record.explanationFormat = resolveFieldFormat(source.explanationFormat, explanation, inheritedFormat)
+  if (scenario) record.scenarioFormat = resolveFieldFormat(source.scenarioFormat, scenario, inheritedFormat)
   if (text(source.codeLanguage)) record.codeLanguage = text(source.codeLanguage)
 
   const startLine = Number(source.startLine)

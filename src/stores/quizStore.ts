@@ -15,44 +15,20 @@ const GUESSED_KEY = 'guessedRightDB'
 const COMBINED_FILE = 'quiz-data.json'
 const COMBINED_LOCAL_KEY = 'wrongNotebookData_v2'
 
-// ── Tauri 文件持久化（比 localStorage 更可靠） ──
-let tauriDataDir: string | null = null
-let tauriWriteAvailable = false
-
-async function initTauriStorage() {
-  try {
-    // 检查是否在 Tauri 环境中
-    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) return
-    const { appDataDir } = await import('@tauri-apps/api/path')
-    const { exists, mkdir } = await import('@tauri-apps/plugin-fs')
-    tauriDataDir = await appDataDir()
-    if (!(await exists(tauriDataDir))) {
-      await mkdir(tauriDataDir, { recursive: true })
-    }
-    tauriWriteAvailable = true
-  } catch (e) {
-    console.warn('[quizStore] Tauri 存储初始化失败，使用 localStorage 作为后备:', e)
-    showToast('本地文件存储不可用，当前使用浏览器存储。请及时备份错题本。')
-  }
-}
+// Both reads and writes use the same Rust resolver, not two independent path APIs.
+const isNativeStorage = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
 async function readTauriFile(filename: string): Promise<string | null> {
-  if (!tauriDataDir || !tauriWriteAvailable) return null
-  const { exists, readTextFile } = await import('@tauri-apps/plugin-fs')
-  const { join } = await import('@tauri-apps/api/path')
-  const path = await join(tauriDataDir, filename)
-  if (!(await exists(path))) return null
-  return readTextFile(path)
+  if (!isNativeStorage) return null
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<string | null>('read_app_document', { name: filename })
 }
 
 async function writeTauriFile(filename: string, content: string): Promise<void> {
-  if (!tauriDataDir || !tauriWriteAvailable) return
-  const { writeTextFile } = await import('@tauri-apps/plugin-fs')
-  const { join } = await import('@tauri-apps/api/path')
-  await writeTextFile(await join(tauriDataDir, filename), content)
+  if (!isNativeStorage) return
+  const { invoke } = await import('@tauri-apps/api/core')
+  await invoke('write_app_document', { name: filename, content })
 }
-
-const tauriStorageReady = initTauriStorage()
 
 // ── 从旧版 localStorage 迁移 ──
 function migrateOldStorage() {
@@ -170,6 +146,8 @@ export const useQuizStore = defineStore('quiz', () => {
     lastSavedAt = Math.max(Date.now(), lastSavedAt + 1)
     return JSON.stringify({
       version: 1,
+      schemaVersion: 2,
+      appVersion: '0.2.0',
       savedAt: lastSavedAt,
       notebooks: notebooks.value,
       wrongEntries: wrongEntries.value,
@@ -179,8 +157,21 @@ export const useQuizStore = defineStore('quiz', () => {
   }
 
   function cacheBrowserData(json: string) {
+    if (localStorage.getItem('exam-restore-pending')) return
     if (browserWritesBlocked) return
     try {
+      const old = localStorage.getItem(COMBINED_LOCAL_KEY)
+      if (old !== null) {
+        try {
+          const previous = parseQuizNotebookData(old)
+          const next = parseQuizNotebookData(json)
+          delete previous.savedAt
+          delete next.savedAt
+          if (JSON.stringify(previous) !== JSON.stringify(next)) localStorage.setItem(COMBINED_LOCAL_KEY + '.previous', old)
+        } catch {
+          localStorage.setItem(COMBINED_LOCAL_KEY + '.damaged', old)
+        }
+      }
       localStorage.setItem(COMBINED_LOCAL_KEY, json)
     } catch (error) {
       console.warn('[quizStore] 浏览器写入失败:', error)
@@ -189,7 +180,6 @@ export const useQuizStore = defineStore('quiz', () => {
   }
 
   async function loadPersistedData() {
-    await tauriStorageReady
     let recoverBrowserCopy = false
     try {
       const raw = await readTauriFile(COMBINED_FILE)
@@ -222,10 +212,16 @@ export const useQuizStore = defineStore('quiz', () => {
 
   // 原生写入串行执行，失败后队列仍可接受后续重试，避免旧快照晚完成覆盖新数据。
   let writeQueue: Promise<void> = Promise.resolve()
+  let lastWriteError: unknown = null
   function queueNativeWrite(json: string): Promise<void> {
+    if (localStorage.getItem("exam-restore-pending")) return Promise.resolve()
     if (nativeWritesBlocked) return Promise.resolve()
-    const write = writeQueue.then(() => writeTauriFile(COMBINED_FILE, json))
+    const write = writeQueue.then(async () => {
+      await writeTauriFile(COMBINED_FILE, json)
+      lastWriteError = null
+    })
     writeQueue = write.catch(error => {
+      lastWriteError = error
       console.warn('[quizStore] 本地文件写入失败:', error)
       showToast('错题本保存失败：本地文件写入失败。浏览器副本仍可用时可导出备份，请检查权限和磁盘空间后重试。')
     })
@@ -272,6 +268,16 @@ export const useQuizStore = defineStore('quiz', () => {
   })
 
   // ── 笔记本操作 ──
+
+  async function flushSavedData() {
+    await persistedDataReady
+    if (nativeWritesBlocked || browserWritesBlocked) throw new Error('错题数据处于保护状态，已停止覆盖原文件')
+    await nextTick()
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+    if (dirty) await saveCombinedData()
+    await writeQueue
+    if (lastWriteError) throw lastWriteError
+  }
 
   /** 创建新笔记本 */
   function createNotebook(name: string, bankFile: string): WrongNotebook {
@@ -646,6 +652,7 @@ export const useQuizStore = defineStore('quiz', () => {
     importToNotebook,
     // 备份与恢复
     persistedDataReady,
+    flushSavedData,
     exportAllDataAsJson,
     importAllDataFromJson,
     getBackupEntryCount,

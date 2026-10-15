@@ -1,6 +1,6 @@
 # 刷题助手架构说明与重构诊断
 
-> 当前实现说明与重构背景：2026-10-05
+> 当前实现说明与重构背景：2026-10-14
 >
 > 本文以当前代码为准；早期诊断只用于解释迁移原因。
 
@@ -11,13 +11,13 @@
 - 外部题库 JSON 只在 `questionSchema.ts` 入口兼容、校验和规范化，业务组件只处理稳定结构。
 - 富文本、代码、Mermaid 和 PlantUML 统一经过 `MarkdownContent.vue` 安全渲染。
 - Web、Tauri 桌面端和 Android 的平台差异收敛到 composable、服务层和 Rust 命令。
-- 内置资源与用户资源分离；安装目录只读，用户数据写入应用数据目录。
+- 前端静态资源内嵌在程序中；安装包不释放外置 `public`，用户数据写入应用数据目录。
 - API Key、个人题库、错题数据和构建临时目录不进入发布资源或版本控制。
 
 ## 2. 当前架构
 
 ```text
-内置资源：$RESOURCE/public/subjects/*.json（只读）
+开发题库：项目 public/subjects/*.json（仅开发版）
 用户资源：%LOCALAPPDATA%/com.exam.assistant/content/subjects/*.json（可写）
         │
         ▼
@@ -48,7 +48,7 @@ useQuiz.ts ───────── 答题状态、筛选、判分、session
 - `src/stores/quizStore.ts`：错题本持久化的唯一入口。
 - `src/composables/useQuiz.ts`：答题 session 和判分的唯一拥有者。
 - `src/services/publicBankStorage.ts`：题库清单、读取和删除权限的前端边界。
-- `src-tauri/src/lib.rs`：桌面端用户目录、内置目录和文件命令的安全边界。
+- `src-tauri/src/lib.rs`：桌面端用户目录、开发目录和文件命令的安全边界。
 - `scripts/generate-banks.mjs`：开发题库清单的生成入口。
 
 ## 3. 题库 JSON
@@ -132,6 +132,8 @@ Mermaid 在题目实际包含图表时按需加载。PlantUML 默认可能把源
 
 练习进度、乱序偏好和当前题库等临时 UI 状态由 `useQuiz.ts` 按题库写入 `localStorage`。这部分不是错题本主数据。
 
+桌面端采用同一 session 的连续滚动 / 一题一页双呈现：`useQuizPresentation.ts` 保存偏好，`useDesktopQuizViewport.ts` 管理阅读锚点和跳转滚动，`QuizSessionView.vue` 复用同一题目组件。`useQuiz.ts` 的跳转只更新当前题与进度，不再直接控制桌面滚动。复合题草稿通过可选 `subDrafts` 字段进入 session，避免组件卸载时丢失未提交输入。范围与回归边界见 [桌面端双呈现设计](DESKTOP_QUIZ_PRESENTATION.md)。
+
 ### 错题本
 
 `quizStore.ts` 将错题本、错题记录、活跃笔记本和猜题记录序列化为一个文档：
@@ -145,9 +147,9 @@ Mermaid 在题目实际包含图表时按需加载。PlantUML 默认可能把源
 
 ## 7. 资源目录与题库生成
 
-### 内置资源
+### 开发与前端资源
 
-开发环境扫描 `public/subjects/` 和 `public/images/`。`scripts/generate-banks.mjs` 生成 `public/subjects/banks.json`。正式构建前由 `scripts/prepare-public-build.mjs` 清理私人题库、图片和错题数据，只保留脱敏资源、配置和空目录占位。
+开发环境扫描 `public/subjects/` 和 `public/images/`。`scripts/generate-banks.mjs` 生成 `public/subjects/banks.json`。正式构建前由 `scripts/prepare-public-build.mjs` 清理私人题库、图片和错题数据；脱敏的前端资源仍由 Vite 构建，并由 Tauri 内嵌，不作为安装目录的 `public` 文件夹释放。
 
 ### 用户资源
 
@@ -158,7 +160,7 @@ Mermaid 在题目实际包含图表时按需加载。PlantUML 默认可能把源
 %LOCALAPPDATA%/com.exam.assistant/content/images/
 ```
 
-Rust 后端同时扫描内置目录和用户目录，并返回 `deletable` 标志：内置题库只读，用户手动放置、应用导入和 AI 生成题库可删除。应用不会向 `Program Files` 写入用户数据。
+正式版 Rust 后端只扫描用户目录；开发版还会扫描项目题库目录，并返回 `deletable` 标志。用户手动放置、应用导入和 AI 生成题库可删除。应用不会向 `Program Files` 写入用户数据。独立 EXE 仅用于免安装测试，仍使用相同的应用数据目录。
 
 ### 常用命令
 
@@ -177,7 +179,7 @@ cargo check --manifest-path src-tauri/Cargo.toml --release
 
 - `src/`、`src-tauri/`、`scripts/` 中的正式代码；
 - `public/config/` 的运行时配置、样例和 Schema 文档；
-- 版本明确包含的脱敏内置题库与 `banks.json`；
+- 开发资源的目录占位与公开说明文件；生成的题库清单和个人题库不提交，不作为安装包外置资源；
 - Docker/Tauri 构建配置和 `docs/`。
 
 不应作为正式架构依赖或提交到 Git：
@@ -207,5 +209,7 @@ cargo check --manifest-path src-tauri/Cargo.toml --release
 - 运行 `npm run prebuild` 更新开发清单。
 
 ## 10. 后续演进
+
+v0.1 已完成收尾验收，下一次发布为 v0.2.0；收尾历史与交接边界见 [V0.1_CLOSEOUT.md](V0.1_CLOSEOUT.md)。
 
 后续优先级以 [ROADMAP_0.2_TO_1.0.md](ROADMAP_0.2_TO_1.0.md) 为准，重点是数据迁移、备份恢复、导入预览、稳定题目 ID、性能基线和发布验收，不以继续堆叠页面数量作为版本完成标准。

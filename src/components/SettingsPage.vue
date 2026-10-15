@@ -17,11 +17,6 @@
           </div>
         </div>
 
-        <div class="settings-quick-stats" aria-label="当前状态">
-          <div><strong>{{ banks.length }}</strong><span>可用题库</span></div>
-          <div><strong>{{ selectedBankName }}</strong><span>当前题库</span></div>
-        </div>
-
         <nav class="settings-nav" aria-label="设置分类">
           <button
             v-for="item in settingsSections"
@@ -52,9 +47,6 @@
           <h2>{{ activeSectionMeta.label }}</h2>
           <p>{{ activeSectionMeta.summary }}</p>
           <div class="settings-header-meta">
-            <span class="settings-live-dot"></span>
-            <span>本地数据已就绪</span>
-            <span class="settings-header-divider"></span>
             <span>{{ banks.length }} 个题库</span>
           </div>
         </header>
@@ -113,6 +105,7 @@
               </div>
 
               <BankManager :banks="banks" :selected-bank="selectedBank" />
+              <DataSafetyPanel />
               <p v-if="resourceMessage" class="status" :class="resourceMessageType">
                 {{ resourceMessage }}
               </p>
@@ -176,6 +169,13 @@
               </div>
 
               <div class="preference-list">
+                <div class="preference-row">
+                  <span class="preference-copy">
+                    <strong>桌面做题呈现</strong>
+                    <small>当前：{{ presentation === 'single' ? '传统' : '滚动' }}。只改变呈现，不改变答题规则；答题前可在此处切换。</small>
+                  </span>
+                  <QuizPresentationSwitch :model-value="presentation" @update:model-value="setPresentation" />
+                </div>
                 <label class="preference-row">
                   <span class="preference-copy">
                     <strong>黑夜模式</strong>
@@ -288,6 +288,9 @@ import type { BankEntry } from '../composables/useQuiz'
 import { useVersion } from '../composables/useVersion'
 import { useDarkMode } from '../composables/useDarkMode'
 import { useUpdatePreferences } from '../composables/useUpdatePreferences'
+import { useQuizPresentation } from '../composables/useQuizPresentation'
+import DataSafetyPanel from './DataSafetyPanel.vue'
+import QuizPresentationSwitch from './QuizPresentationSwitch.vue'
 import {
   APP_NAME,
   COPYRIGHT_LINE,
@@ -306,7 +309,7 @@ import {
 import { openExternalUrl } from '../utils/openExternal'
 import { openContentLocation, type ContentLocation } from '../utils/openContentLocation'
 
-const props = defineProps<{ banks: BankEntry[]; selectedBank: string; isRefreshingBanks?: boolean }>()
+defineProps<{ banks: BankEntry[]; selectedBank: string; isRefreshingBanks?: boolean }>()
 const emit = defineEmits<{
   back: []
   refreshBanks: []
@@ -372,7 +375,6 @@ watch(activeSection, section => { if (section === 'ai-convert') converterVisited
 const activeSectionMeta = computed(
   () => settingsSections.find((item) => item.id === activeSection.value) ?? settingsSections[0],
 )
-const selectedBankName = computed(() => props.banks.find((bank) => bank.file === props.selectedBank)?.name ?? '未选择')
 
 const { version, isUpdating, updateError, checkUpdate } = useVersion()
 const plantUmlServer = ref(getPlantUmlServerOverride())
@@ -385,6 +387,7 @@ const resourceMessageType = ref<'success' | 'error'>('success')
 const openError = ref('')
 const { isDarkMode, toggleDarkMode } = useDarkMode()
 const { autoCheckUpdates, setAutoCheckUpdates } = useUpdatePreferences()
+const { presentation, setPresentation } = useQuizPresentation()
 
 function setDarkMode(value: boolean) {
   if (isDarkMode.value !== value) toggleDarkMode()
@@ -1285,19 +1288,12 @@ async function openLink(url: string) {
   }
 }
 /* Settings dashboard accents. Kept CSS-only so the desktop shell stays fast. */
-.settings-quick-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 16px 20px 4px; }
-.settings-quick-stats > div { display: grid; gap: 3px; min-width: 0; padding: 10px; border: 1px solid var(--color-border-divider); border-radius: 10px; background: var(--color-bg-container); }
-.settings-quick-stats strong { overflow: hidden; color: var(--color-text-primary); font-size: .82rem; text-overflow: ellipsis; white-space: nowrap; }
-.settings-quick-stats span { color: var(--color-text-muted); font-size: .68rem; }
 .settings-header-meta { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--color-text-muted); font-size: .74rem; }
-.settings-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 4px color-mix(in srgb, #22c55e 14%, transparent); animation: settings-pulse 2.4s ease-in-out infinite; }
-.settings-header-divider { width: 1px; height: 13px; background: var(--color-border-divider); }
 .settings-nav-item { transition: transform .18s ease, background-color .18s ease, border-color .18s ease, box-shadow .18s ease; }
 .settings-nav-item:hover { transform: translateX(2px); box-shadow: 0 5px 12px rgba(15, 23, 42, .05); }
 .settings-nav-item.active { box-shadow: inset 3px 0 0 var(--color-accent), 0 6px 16px rgba(15, 23, 42, .045); }
 .settings-card { animation: settings-card-in .26s ease both; }
 @keyframes settings-card-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
-@keyframes settings-pulse { 0%, 100% { opacity: .72; transform: scale(.9); } 50% { opacity: 1; transform: scale(1.16); } }
-@media (prefers-reduced-motion: reduce) { .settings-live-dot, .settings-card, .settings-nav-item { animation: none !important; transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { .settings-card, .settings-nav-item { animation: none !important; transition: none !important; } }
 
 </style>

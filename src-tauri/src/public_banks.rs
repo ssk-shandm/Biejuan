@@ -24,6 +24,38 @@ pub struct BankSaveResult {
     pub location: String,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bom_chinese_paths_and_long_names_save_without_overwriting_existing_files() {
+        let root = std::env::temp_dir().join(format!("exam-import-{}-中文", std::process::id()));
+        let content = "\u{feff}[{\"number\":1,\"type\":\"single\",\"content\":\"测试\",\"options\":{\"A\":\"一\",\"B\":\"二\"},\"answer\":\"A\"}]";
+        let make = || BankPayload {
+            name: "超长中文题库名称".repeat(100),
+            directory: "import-test".into(),
+            content: content.into(),
+            images: vec![],
+        };
+        let first = save_bank(&root, "/user-subjects", make()).unwrap();
+        let second = save_bank(&root, "/user-subjects", make()).unwrap();
+        assert_ne!(first.file, second.file);
+        assert!(Path::new(&first.location).is_file());
+        assert!(Path::new(&second.location).is_file());
+        assert!(fs::read_to_string(&first.location)
+            .unwrap()
+            .starts_with('\u{feff}'));
+        let invalid = BankPayload {
+            content: "{broken".into(),
+            ..make()
+        };
+        assert!(save_bank(&root, "/user-subjects", invalid).is_err());
+        assert_eq!(fs::read_dir(root.join("subjects")).unwrap().count(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
 fn validate_component(name: &str) -> Result<(), String> {
     let device = name.split('.').next().unwrap_or("").to_ascii_uppercase();
     if name.is_empty()

@@ -10,7 +10,6 @@
       :available-question-types="availableQuestionTypes"
       :current-bank-notebooks="currentBankNotebooks"
       :active-notebook-for-bank="activeNotebookForBank"
-      :active-notebook-for-bank-obj="activeNotebookForBankObj"
       :current-bank-name="currentBankName"
       :wrong-count="wrongCount"
       :notebook-entry-counts="notebookEntryCounts"
@@ -35,10 +34,8 @@
       @start-practice="(id: string) => { quizStore.setActiveNotebook(currentBankFile, id); handleStartGame('wrong'); }"
       @delete-notebook="deleteNotebookById"
       @rename-notebook="(id: string, name: string) => quizStore.renameNotebook(id, name)"
-      @backup-all="handleBackupAll"
-      @restore-all="handleRestoreAll"
       @reset-error="() => { renderError = ''; appMode = 'start' }"
-      @jump-to="(idx: number) => handleJumpTo(idx, isDarkMode)"
+      @jump-to="handleJumpTo"
       @clear-wrong="handleClearWrong"
       @clear-practice="handleClearPractice"
       @toggle-shuffle="handleToggleShuffle"
@@ -48,6 +45,7 @@
       @submit="handleSubmit"
       @compound-submit="handleCompoundSubmit"
       @sub-submit="handleSubSubmit"
+      @sub-answer-update="handleSubAnswerUpdate"
       @submit-exam="submitExam"
     />
   </Transition>
@@ -85,14 +83,12 @@ import AppScreenHost from './components/shared/AppScreenHost.vue'
 import ToastContainer from './components/ToastContainer.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
 import LoadingView from './components/shared/LoadingView.vue'
-import { useDarkMode } from './composables/useDarkMode'
 import { useQuiz } from './composables/useQuiz'
 import { useQuizStore } from './stores/quizStore'
 import { useWrongNotebookActions } from './composables/useWrongNotebookActions'
 import { useVersion } from './composables/useVersion'
 import { useUpdatePreferences } from './composables/useUpdatePreferences'
 
-const { isDarkMode } = useDarkMode()
 const { checkUpdate } = useVersion()
 const { autoCheckUpdates } = useUpdatePreferences()
 onMounted(() => {
@@ -110,7 +106,7 @@ const {
   shuffledQuestions, answerSheet, currentQuestionIndex, totalQuestions, score,
   wrongCount, wrongDisplayEntryIds, fileInput, shuffleEnabled,
   handleStartGame, handleStartSpecialize, handleBankChange, handleBackToHome,
-  handleAnswerUpdate, handleSubmit, handleCompoundSubmit, handleSubSubmit,
+  handleAnswerUpdate, handleSubmit, handleCompoundSubmit, handleSubSubmit, handleSubAnswerUpdate,
   handleToggleShuffle, handleClearPractice, handleAddToWrongBook, handleClearWrong,
   handleJumpTo, submitExam, exportWrongQuestions, importWrongQuestions, handleFileImport,
   allBanks, refreshBanks, isRefreshingBanks,
@@ -174,15 +170,12 @@ const activeNotebookName = computed(() => {
 /** 当前活跃错题本 id */
 const activeNotebookForBank = computed(() => quizStore.getActiveNotebook(currentBankFile.value)?.id)
 
-/** 当前活跃错题本对象 */
-const activeNotebookForBankObj = computed(() => quizStore.getActiveNotebook(currentBankFile.value) ?? null)
-
 /** 当前题库名称 */
 const currentBankName = computed(() => {
   return allBanks.value.find(b => b.file === currentBankFile.value)?.name || currentBankFile.value
 })
 
-const { deleteNotebookById, handleBackupAll, handleRestoreAll } = useWrongNotebookActions(questions)
+const { deleteNotebookById } = useWrongNotebookActions(questions)
 
 onErrorCaptured((err) => { console.error('[渲染错误]', err, err?.stack); renderError.value = String(err) + (err?.stack ? '\n' + err.stack : ''); return false })
 </script>

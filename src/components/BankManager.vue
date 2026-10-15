@@ -1,5 +1,6 @@
 ﻿<template>
   <section class="bank-manager" aria-label="当前题库">
+    <BankImportPanel />
     <div class="bank-manager-heading">
       <div>
         <h4>当前题库（{{ banks.length }}）</h4>
@@ -11,7 +12,7 @@
       <label v-for="bank in banks" :key="bank.file" class="bank-manager-row" :class="{ disabled: !isBankDeletable(bank) }">
         <input v-model="selected" type="checkbox" :value="bank.file" :disabled="deleting || !isBankDeletable(bank)" />
         <span class="bank-manager-name">{{ bank.name }} <small v-if="bank.file === selectedBank">当前选中</small></span>
-        <span class="bank-manager-kind">{{ isBankDeletable(bank) ? '本地题库' : '只读' }}</span>
+        <span class="bank-manager-kind">{{ bankSourceLabel(bank.file, isDevelopment) }}</span>
       </label>
     </div>
     <div class="bank-manager-footer">
@@ -25,11 +26,15 @@
 </template>
 
 <script setup lang="ts">
+import BankImportPanel from './BankImportPanel.vue'
 import { ref, watch } from 'vue'
 import type { BankEntry } from '../composables/useQuiz'
 import { deleteManagedBanks, isBankDeletable } from '../services/publicBankStorage'
 import { showConfirm } from '../composables/useToast'
 import { useQuizStore } from '../stores/quizStore'
+import { isBankSessionKey } from '../utils/bankSessionKeys'
+import { bankSourceLabel, forgetBankSources } from '../services/bankSources'
+const isDevelopment = import.meta.env.DEV
 
 const props = defineProps<{ banks: BankEntry[]; selectedBank: string }>()
 const store = useQuizStore()
@@ -55,12 +60,13 @@ async function removeSelected() {
   deleting.value = true
   message.value = ''
   try {
+    const notebookIds = store.notebooks.map(notebook => notebook.id)
     const result = await deleteManagedBanks(props.banks.filter(bank => fileSet.has(bank.file)))
     if (result.deleted.length) await store.removeBanksData(result.deleted)
+    forgetBankSources(result.deleted)
     for (const file of result.deleted) {
-      for (const key of [`practice_session_${file}`, `wrong_session_${file}`, `practice_shuffle_pref_${file}`]) localStorage.removeItem(key)
       for (const key of Object.keys(localStorage)) {
-        if (key.startsWith(`specialize_session_${file}_`)) localStorage.removeItem(key)
+        if (isBankSessionKey(key, localStorage.getItem(key), file, notebookIds)) localStorage.removeItem(key)
       }
     }
     selected.value = selected.value.filter(file => !result.deleted.includes(file))

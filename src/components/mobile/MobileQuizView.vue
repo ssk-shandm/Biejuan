@@ -11,6 +11,9 @@
       <strong>第 {{ currentQuestionIndex + 1 }} / {{ totalQuestions }} 题</strong>
       <span class="mobile-muted">{{ modeLabel }}</span>
     </div>
+    <div v-if="appMode === 'wrong'" class="mobile-panel">
+      <button class="mobile-action mobile-primary" type="button" @click="$emit('addToWrongBook')">添加到新的错题本</button>
+    </div>
     <article :id="'q-' + currentQuestion.number" class="mobile-panel mobile-question question-list-item">
       <QuestionDisplay
         :key="currentQuestion.number"
@@ -22,6 +25,8 @@
         :disabled="appMode === 'endorse'"
         :is-correct="answerSheet.get(currentQuestion.number)?.isCorrect ?? false"
         :sub-results="answerSheet.get(currentQuestion.number)?.subAnswers"
+        :sub-drafts="answerSheet.get(currentQuestion.number)?.subDrafts"
+        @sub-answer-update="(subId: number, answer: string) => emit('subAnswerUpdate', currentQuestion!, subId, answer)"
         :app-mode="appMode"
         :bank-file="currentBankFile"
         :wrong-entry-id="wrongDisplayEntryIds[currentQuestionIndex] ?? 0"
@@ -49,7 +54,6 @@ import type { AppMode, Question, SubAnswer, UserAnswer } from '../../types'
 import type { AnswerSheetEntry } from '../../composables/useQuiz'
 import QuestionDisplay from '../QuestionDisplay.vue'
 import MobileBottomNav from './MobileBottomNav.vue'
-
 defineProps<{
   appMode: AppMode
   modeLabel: string
@@ -66,11 +70,13 @@ const emit = defineEmits<{
   (event: 'submit', question: Question): void
   (event: 'compoundSubmit', question: Question, answers: Map<number, SubAnswer>): void
   (event: 'subSubmit', question: Question, subId: number, answer: string): void
+  (event: 'subAnswerUpdate', question: Question, subId: number, answer: string): void
   (event: 'previous'): void
   (event: 'answerSheet'): void
   (event: 'next'): void
   (event: 'submitExam'): void
   (event: 'home'): void
   (event: 'resetError'): void
+  (event: 'addToWrongBook'): void
 }>()
 </script>

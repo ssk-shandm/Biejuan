@@ -32,7 +32,7 @@ export async function readImportedFile(file: File | ImportedFile): Promise<Array
 }
 
 export async function readImportedText(file: File | ImportedFile): Promise<string> {
-  return new TextDecoder().decode(await readImportedFile(file))
+  return new TextDecoder('utf-8', { fatal: true }).decode(await readImportedFile(file))
 }
 
 /** LocalStorage-backed fallback for web runtimes. */

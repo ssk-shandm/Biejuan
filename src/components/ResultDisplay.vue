@@ -2,22 +2,24 @@
   <div id="result-container">
     <p id="result-text" :class="resultTextClass">{{ resultText }}</p>
 
-    <div v-if="!isCorrect && acceptedAlternatives.length && !isShortAnswer" class="accepted-alternatives">
-      <p><strong>可接受的答案：</strong>{{ acceptedAlternatives.join('、') }}</p>
+    <div v-if="!isCorrect && acceptedAlternatives.length && !isShortAnswer" class="result-section accepted-alternatives">
+      <div class="result-section-title">可接受的答案</div>
+      <MarkdownContent :content="acceptedAlternatives.join('、')" :format="answerFormat" />
     </div>
 
-    <div v-if="showAnswerBlock" class="answer-block">
-      <p v-if="!isShortAnswer"><strong>参考答案：</strong></p>
+    <section class="result-section answer-block" :aria-label="isShortAnswer ? '参考回答' : '参考答案'">
+      <div class="result-section-title">{{ isShortAnswer ? '参考回答' : '参考答案' }}</div>
       <MarkdownContent
-        :class="isRichAnswer ? 'markdown-answer-content' : 'plain-answer'"
+        class="markdown-answer-content"
         :content="correctAnswer"
-        :format="answerFormat || 'text'"
+        :format="answerFormat"
       />
-    </div>
+    </section>
 
-    <div id="explanation-text" v-if="explanation">
-      <MarkdownContent :content="explanation" :format="explanationFormat || 'text'" />
-    </div>
+    <section id="explanation-text" v-if="explanation" class="result-section" aria-label="解析">
+      <div class="result-section-title">解析</div>
+      <MarkdownContent :content="explanation" :format="explanationFormat" />
+    </section>
   </div>
 </template>
 
@@ -25,7 +27,6 @@
 import { computed } from 'vue'
 import type { ContentFormat, UserAnswer } from '../types'
 import MarkdownContent from './MarkdownContent.vue'
-import { normalizeContentFormat } from '../utils/contentFormat'
 
 const props = withDefaults(defineProps<{
   isCorrect: boolean
@@ -47,8 +48,6 @@ const props = withDefaults(defineProps<{
 })
 
 const isShortAnswer = computed(() => props.questionType === '简答题' || props.questionType === '简答')
-const isRichAnswer = computed(() => normalizeContentFormat(props.answerFormat) !== 'text')
-const showAnswerBlock = computed(() => isRichAnswer.value || isShortAnswer.value)
 
 const acceptedAlternatives = computed(() => {
   if (!props.answerDetail?.accepts?.length) return []
@@ -62,25 +61,53 @@ const resultTextClass = computed(() => {
 })
 
 const resultText = computed(() => {
-  if (isShortAnswer.value) return '参考回答：'
+  if (isShortAnswer.value) return '本题为开放式作答，参考回答见下方。'
   if (props.isCorrect) return '回答正确！'
-  if (isRichAnswer.value) return '回答错误。正确答案见下方。'
-  return `回答错误。正确答案: ${props.correctAnswer}。`
+  return '回答错误。正确答案见下方。'
 })
 </script>
 <style scoped>
 #result-container {
   margin-top: 20px;
+  display: grid;
+  gap: 12px;
 }
-#result-container p {
+#result-container > #result-text {
   margin: 10px 0;
   padding: 10px;
   border-radius: 8px;
 }
+.result-section {
+  padding: 14px 16px;
+  border: 1px solid var(--color-border-divider);
+  border-radius: 10px;
+  background: var(--color-bg-surface, var(--color-bg-container));
+  color: var(--color-text-primary);
+}
+.result-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: var(--color-text-heading);
+  font-size: .92rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+.result-section-title::before {
+  content: '';
+  width: 4px;
+  height: 1.1em;
+  border-radius: 999px;
+  background: var(--color-accent);
+}
 #explanation-text {
-  background-color: var(--color-bg-explanation);
-  border-left: 4px solid var(--color-border-surface);
-  color: var(--color-text-secondary);
+  background: var(--color-bg-explanation);
+  border-left: 4px solid var(--color-border-explanation);
+  color: var(--color-text-explanation);
+}
+#explanation-text .result-section-title {
+  color: var(--color-text-explanation);
 }
 .correct {
   background-color: var(--color-bg-sub-correct);
@@ -99,12 +126,9 @@ const resultText = computed(() => {
 }
 
 .accepted-alternatives {
-  margin: 8px 0;
-  padding: 10px;
-  background-color: var(--color-bg-explanation);
+  background: var(--color-bg-explanation);
   border-left: 4px solid var(--color-border-surface);
   color: var(--color-text-secondary);
-  border-radius: 8px;
   font-size: 0.9rem;
 }
 .accepted-alternatives strong {
@@ -112,13 +136,12 @@ const resultText = computed(() => {
 }
 
 .answer-block {
-  margin: 8px 0;
-  line-height: 1.6;
+  line-height: 1.7;
+  border-left: 4px solid var(--color-border-correct-left);
 }
 .answer-block .plain-answer {
-  padding: 10px;
-  background-color: var(--color-bg-explanation);
-  border-left: 4px solid var(--color-border-surface);
+  padding: 10px 12px;
+  background: var(--color-bg-explanation);
   color: var(--color-text-primary);
   border-radius: 8px;
   white-space: pre-wrap;
@@ -146,6 +169,15 @@ const resultText = computed(() => {
   border-radius: 4px;
   font-family: 'Fira Code', Consolas, Monaco, monospace;
   font-size: 0.9em;
+}
+#explanation-text > .markdown-content {
+  line-height: 1.75;
+}
+#explanation-text :deep(p),
+#explanation-text :deep(ul),
+#explanation-text :deep(ol) {
+  margin-top: 8px;
+  margin-bottom: 8px;
 }
 
 #next-btn {

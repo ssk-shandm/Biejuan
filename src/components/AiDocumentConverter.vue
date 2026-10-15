@@ -6,14 +6,6 @@
         <h3>文档转换</h3>
         <p>提取 Word、PPT、PDF、Excel 和文本资料后，由 AI 分析文档结构、识别题目与答案区，再经 Schema 校验与自动修复生成题库 JSON。</p>
       </div>
-      <div class="model-summary" :class="{ ready: modelConfigured }">
-        <span class="state-dot" aria-hidden="true"></span>
-        <div>
-          <strong>{{ modelConfigured ? provider.model : '模型尚未配置' }}</strong>
-          <small>{{ modelConfigured ? provider.baseUrl : '请先完成 AI 模型配置' }}</small>
-        </div>
-        <button v-if="!modelConfigured" type="button" @click="emit('configure')">去配置</button>
-      </div>
     </div>
 
     <div class="format-strip" aria-label="支持的文档格式">
@@ -386,47 +378,6 @@ p {
   line-height: 1.6;
 }
 
-.model-summary {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 210px;
-  padding: 10px 12px;
-  border: 1px solid var(--color-border-divider);
-  border-radius: 9px;
-  color: var(--color-text-muted);
-}
-
-.model-summary.ready {
-  border-color: rgba(39, 174, 96, .38);
-}
-
-.model-summary > div {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-.model-summary strong,
-.model-summary small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.model-summary strong {
-  color: var(--color-text-primary);
-}
-
-.model-summary button {
-  margin-left: auto;
-  border: 0;
-  padding: 4px 0;
-  color: var(--color-accent);
-  background: transparent;
-  cursor: pointer;
-}
-
 .state-dot {
   width: 8px;
   height: 8px;
@@ -435,8 +386,7 @@ p {
   background: #9ba6b2;
 }
 
-.ready .state-dot,
-.model-summary.ready .state-dot {
+.ready .state-dot {
   background: #27ae60;
   box-shadow: 0 0 0 4px rgba(39, 174, 96, .14);
 }
@@ -706,11 +656,6 @@ p {
   .output-heading,
   .convert-actions {
     flex-direction: column;
-  }
-
-  .model-summary {
-    width: 100%;
-    box-sizing: border-box;
   }
 
   .form-grid {

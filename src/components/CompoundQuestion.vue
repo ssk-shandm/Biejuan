@@ -49,7 +49,7 @@
           </div>
           <div v-if="safeSubResults.get(sub.id)" class="sub-answer-display">
             <span class="sub-user-answer">你的答案：{{ userAnswers.get(sub.id) || '—' }}</span>
-            <span class="sub-correct-answer">正确答案：{{ sub.answer }}</span>
+            <div class="sub-correct-answer">正确答案：<MarkdownContent :content="sub.answer" :format="sub.answerFormat" /></div>
           </div>
         </template>
 
@@ -80,7 +80,7 @@
           </div>
           <div v-if="safeSubResults.get(sub.id)" class="sub-answer-display">
             <span class="sub-user-answer">你的答案：{{ formatMulti(userAnswers.get(sub.id)) || '—' }}</span>
-            <span class="sub-correct-answer">正确答案：{{ formatMulti(sub.answer) }}</span>
+            <div class="sub-correct-answer">正确答案：<MarkdownContent :content="formatMulti(sub.answer)" :format="sub.answerFormat" /></div>
           </div>
         </template>
 
@@ -138,7 +138,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { computed } from 'vue'
 import type { Question, SubAnswer, AppMode, SubQuestion } from '../types'
 import MarkdownContent from './MarkdownContent.vue'
 import { inheritedContentFormat } from '../utils/contentFormat'
@@ -150,6 +150,7 @@ const props = withDefaults(
     totalQuestions: number
     disabled: boolean
     subResults?: Map<number, SubAnswer>
+    subDrafts?: Record<number, string>
     showResults: boolean
     appMode: AppMode
   }>(),
@@ -162,27 +163,23 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'submit', subAnswers: Map<number, SubAnswer>): void
   (e: 'submit-sub', subId: number, userAnswer: string): void
+  (e: 'answer-update', subId: number, userAnswer: string): void
 }>()
-
-// 子题用户输入（内部状态）
-const userAnswers = ref(new Map<number, string>())
-
-// 当 showResults 或 disabled 变化时重置
-watch(
-  () => props.showResults,
-  (newVal) => {
-    if (!newVal) {
-      userAnswers.value = new Map()
-    }
-  },
-)
-
 
 /** 安全的 subResults，确保始终是 Map（防止 session 恢复后变成普通对象） */
 const safeSubResults = computed(() => {
   const sr = props.subResults
   if (!sr || typeof sr.get !== 'function') return new Map<number, SubAnswer>()
   return sr
+})
+
+// Drafts and submitted answers belong to the session, not the mounted renderer.
+const userAnswers = computed(() => {
+  const answers = new Map<number, string>()
+  for (const sub of props.question.subQuestions ?? []) {
+    answers.set(sub.id, safeSubResults.value.get(sub.id)?.userAnswer ?? props.subDrafts?.[sub.id] ?? '')
+  }
+  return answers
 })
 
 /** 获取子题类型，默认为文本题 */
@@ -198,8 +195,7 @@ function getSubResultClass(subId: number): string {
 }
 
 function handleInput(subId: number, value: string) {
-  userAnswers.value.set(subId, value)
-  userAnswers.value = new Map(userAnswers.value)
+  emit('answer-update', subId, value)
 }
 
 /** 多选题复选框切换 */
@@ -211,8 +207,7 @@ function updateCheckbox(subId: number, key: string) {
     current.push(key)
   }
   current.sort()
-  userAnswers.value.set(subId, current.join(''))
-  userAnswers.value = new Map(userAnswers.value)
+  handleInput(subId, current.join(''))
 }
 
 /** 多选题答案格式化显示 */

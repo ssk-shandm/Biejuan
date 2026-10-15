@@ -17,8 +17,9 @@
       </button>
     </template>
 
-    <!-- 错题：重置答案 + 清空 + 导出 -->
+    <!-- 错题：收集再次答错的题目 + 重置答案 + 清空 + 导出 -->
     <template v-if="mode === 'wrong'">
+      <button v-if="questionCount > 0" @click="$emit('addToWrongBook')" class="toolbar-btn add-all-wrong">添加到新的错题本</button>
       <button v-if="wrongCount > 0" @click="$emit('clearWrongAnswers')" class="toolbar-btn reset-answers">清空答案</button>
       <button v-if="wrongCount > 0" @click="$emit('clearWrong')" class="toolbar-btn clear-wrong">清空错题本</button>
       <button v-if="wrongCount > 0" @click="$emit('exportWrong')" class="toolbar-btn export">导出错题</button>

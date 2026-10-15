@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Prepare the public assets used by a release build.
+ * Prepare sanitized frontend assets used by a release build.
  *
  * Question banks, question images, and wrong-answer notebooks are local user
  * data. They remain available to `npm run dev`, but are intentionally omitted
@@ -30,7 +30,7 @@ function copyPublicAssets() {
     }
   }
 
-  // Keep the runtime directories present, but never copy their local contents.
+  // Keep Web listing/location links valid without copying local contents.
   const subjectsDir = join(STAGING_PUBLIC, 'subjects')
   const imagesDir = join(STAGING_PUBLIC, 'images')
   mkdirSync(subjectsDir, { recursive: true })

@@ -6,6 +6,7 @@ import hljs from 'highlight.js/lib/core'
 import java from 'highlight.js/lib/languages/java'
 import javascript from 'highlight.js/lib/languages/javascript'
 import sql from 'highlight.js/lib/languages/sql'
+import { mathExtensions } from './math'
 
 hljs.registerLanguage('java', java)
 hljs.registerLanguage('javascript', javascript)
@@ -21,6 +22,8 @@ marked.use(
     },
   }),
 )
+
+marked.use({ extensions: mathExtensions })
 
 export type DiagramType = 'mermaid' | 'plantuml'
 export interface DiagramBlock {
@@ -76,12 +79,17 @@ export function renderMarkdownDocument(content: string, format: ContentFormat = 
 export function stripMarkdown(text: string): string {
   if (text == null) return ''
   let result = text
-  result = result.replace(/```[\s\S]*?```/g, '')
+  result = result.replace(/```[^\n]*\r?\n([\s\S]*?)```/g, '$1')
   result = result.replace(/`([^`]+)`/g, '$1')
   result = result.replace(/\*\*([^*]+)\*\*/g, '$1')
   result = result.replace(/\*([^*]+)\*/g, '$1')
   result = result.replace(/^#{1,6}\s+/gm, '')
   result = result.replace(/<[^>]+>/g, '')
+  result = result.replace(/\$\$([\s\S]*?)\$\$|\$([^$\n]+)\$|\\\(([\s\S]*?)\\\)|\\\[([\s\S]*?)\\\]/g,
+    (_match, block: string, inline: string, parentheses: string, brackets: string) => block ?? inline ?? parentheses ?? brackets)
+  result = result.replace(/([_^])\{([+-]?\d+)\}/g, '$1$2')
+  result = result.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻]+/g, (power) => '^' + [...power].map((character) =>
+    '0123456789+-'['⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻'.indexOf(character)]).join(''))
   return result.trim()
 }
 

@@ -26,6 +26,7 @@ function isPositiveInteger(value: unknown): value is number {
 export function validateQuizNotebookData(value: unknown): QuizNotebookData {
   if (!isRecord(value)) throw new Error('无效的错题本数据格式')
   if (value.version !== 1) throw new Error('不支持的错题本数据版本')
+  if (value.schemaVersion !== undefined && value.schemaVersion !== 2) throw new Error('不支持的应用数据版本')
   if (value.savedAt !== undefined && !isTimestamp(value.savedAt)) throw new Error('savedAt 时间戳格式错误')
   if (!Array.isArray(value.notebooks)) throw new Error('缺少 notebooks 数组')
   if (!Array.isArray(value.wrongEntries)) throw new Error('缺少 wrongEntries 数组')

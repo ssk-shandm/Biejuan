@@ -11,11 +11,6 @@
       <button @click="$emit('import')" class="mode-btn import-btn">导入错题 (JSON)</button>
       <button v-if="totalEntryCount > 0" @click="$emit('export')" class="mode-btn export-btn">导出当前错题本</button>
     </div>
-    <div class="wm-actions wm-backup-actions">
-      <button @click="$emit('backupAll')" class="mode-btn backup-btn">💾 备份全部错题本数据</button>
-      <button @click="triggerRestore" class="mode-btn restore-btn">📂 恢复全部错题本数据</button>
-      <input type="file" ref="restoreInput" @change="$emit('restoreAll', $event)" style="display:none" accept=".json" />
-    </div>
 
     <!-- 错题本列表 -->
     <div class="wm-notebooks">
@@ -58,13 +53,6 @@
         </div>
       </div>
     </div>
-
-    <!-- 开始练习按钮（快速入口） -->
-    <div v-if="activeNotebook" class="wm-quick-start">
-      <button @click="$emit('startPractice', activeNotebook.id)" class="mode-btn start-btn">
-        🚀 开始练习「{{ activeNotebook.name }}」
-      </button>
-    </div>
   </div>
 </template>
 
@@ -72,16 +60,9 @@
 import { ref, nextTick } from 'vue'
 import type { WrongNotebook } from '../types'
 
-const restoreInput = ref<HTMLInputElement | null>(null)
-
-function triggerRestore() {
-  restoreInput.value?.click()
-}
-
 defineProps<{
   notebooks: WrongNotebook[]
   activeId?: string
-  activeNotebook?: WrongNotebook | null
   bankName: string
   totalEntryCount: number
   /** 每个笔记本的条目数 */
@@ -92,8 +73,6 @@ const emit = defineEmits<{
   back: []
   import: []
   export: []
-  backupAll: []
-  restoreAll: [event: Event]
   setActive: [notebookId: string]
   startPractice: [notebookId: string]
   delete: [notebookId: string]
@@ -171,9 +150,6 @@ function formatDate(ts: number) {
 .mode-btn:hover { transform: translateY(-1px); }
 .import-btn { color: var(--color-accent); border-color: var(--color-accent); }
 .export-btn { color: var(--color-accent); border-color: var(--color-accent); }
-.wm-backup-actions { margin-top: -14px; }
-.backup-btn { color: #27ae60; border-color: #27ae60; }
-.restore-btn { color: #8e44ad; border-color: #8e44ad; }
 .wm-notebooks {
   margin-bottom: 20px;
 }
@@ -254,17 +230,6 @@ function formatDate(ts: number) {
   color: var(--color-text-primary);
   width: 200px;
   outline: none;
-}
-.wm-quick-start {
-  text-align: center;
-  padding-top: 16px;
-  border-top: 1px solid var(--color-border-divider);
-}
-.start-btn {
-  background: var(--color-bg-btn-primary) !important;
-  color: var(--color-text-btn-primary) !important;
-  font-size: 1.05rem !important;
-  padding: 14px 40px !important;
 }
 .toolbar-btn.back-home {
   padding: 6px 12px;

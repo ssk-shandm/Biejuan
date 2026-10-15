@@ -1,6 +1,6 @@
 [package]
 name = "aaa"
-version = "0.1.6"
+version = "0.2.0"
 description = "别卷 - A quiz practice application"
 authors = ["ssk-shandm"]
 license = "MIT"
@@ -25,4 +25,4 @@ base64 = "0.22.1"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "stream"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61.2", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Storage_FileSystem"] }

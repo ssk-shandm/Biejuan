@@ -11,8 +11,6 @@
 
     <div class="mobile-notebook-toolbar mobile-wrong-toolbar">
       <button class="mobile-action mobile-wrong-tool mobile-wrong-tool-primary" type="button" @click="$emit('import')"><span aria-hidden="true">＋</span> 导入错题</button>
-      <button class="mobile-action mobile-wrong-tool" type="button" @click="$emit('backupAll')"><span aria-hidden="true">↥</span> 备份全部</button>
-      <button class="mobile-action mobile-wrong-tool" type="button" @click="$emit('restoreAll')"><span aria-hidden="true">↧</span> 恢复备份</button>
     </div>
 
     <div v-if="!notebooks.length" class="mobile-notebook-empty mobile-wrong-empty">
@@ -51,8 +49,6 @@ defineProps<{
 }>()
 defineEmits<{
   (event: 'import'): void
-  (event: 'backupAll'): void
-  (event: 'restoreAll'): void
   (event: 'startPractice', notebookId: string): void
   (event: 'setActive', notebookId: string): void
   (event: 'rename', notebookId: string): void

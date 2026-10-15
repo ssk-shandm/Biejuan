@@ -46,12 +46,14 @@
       @submit="handleSubmit"
       @compound-submit="handleCompoundSubmit"
       @sub-submit="handleSubSubmit"
+      @sub-answer-update="handleSubAnswerUpdate"
       @previous="jump(currentQuestionIndex - 1)"
       @answer-sheet="showAnswerSheet = true"
       @next="jump(currentQuestionIndex + 1)"
       @submit-exam="submitExam"
       @home="goHome"
       @reset-error="resetQuizError"
+      @add-to-wrong-book="handleAddToWrongBook"
     />
 
     <section v-else-if="screen === 'review'" class="mobile-panel mobile-mode-list">
@@ -84,8 +86,6 @@
       :entry-counts="notebookEntryCounts"
       :total-entry-count="currentBankTotalEntryCount"
       @import="importWrongQuestions"
-      @backup-all="handleBackupAll"
-      @restore-all="restoreInput?.click()"
       @start-practice="startNotebookPractice"
       @set-active="setActiveNotebook"
       @rename="renameNotebook"
@@ -107,7 +107,6 @@
 
     <input ref="bankImportInput" type="file" accept=".json,application/json" hidden @change="handleExternalBankFileImport" />
     <input ref="fileInput" type="file" accept=".json,application/json" hidden @change="handleFileImport" />
-    <input ref="restoreInput" type="file" accept=".json,application/json" hidden @change="handleRestoreAll" />
 
     <div v-if="screen === 'wrong-notebook' && showImportDialog" class="mobile-dialog-overlay" @click.self="cancelImport">
       <section class="mobile-dialog" role="dialog" aria-modal="true" aria-labelledby="mobile-import-title">
@@ -181,8 +180,8 @@ const {
   shuffledQuestions, currentQuestionIndex, totalQuestions, answerSheet, wrongCount,
   wrongDisplayEntryIds, score, renderError, fileInput,
   handleBankChange, handleStartGame, handleStartSpecialize, handleBackToHome,
-  handleAnswerUpdate, handleSubmit, handleCompoundSubmit, handleSubSubmit,
-  handleJumpTo, submitExam, importWrongQuestions, handleFileImport,
+  handleAnswerUpdate, handleSubmit, handleCompoundSubmit, handleSubSubmit, handleSubAnswerUpdate,
+  handleJumpTo, submitExam, importWrongQuestions, handleFileImport, handleAddToWrongBook,
   handleExternalBankFileImport,
   showImportDialog, importDialogNewNotebookName, pendingImportQuestions,
   confirmImportToNew, confirmImportToExisting, cancelImport,
@@ -205,7 +204,7 @@ const goBack = () => {
 }
 useAndroidBackButton(goBack)
 const {
-  deleteNotebookById, exportNotebook, handleBackupAll, handleRestoreAll,
+  deleteNotebookById, exportNotebook,
 } = useWrongNotebookActions(questions)
 
 const currentQuestion = computed(() => shuffledQuestions.value[currentQuestionIndex.value])
@@ -221,7 +220,6 @@ const notebookEntryCounts = computed(() => {
   return counts
 })
 const currentBankTotalEntryCount = computed(() => Object.values(notebookEntryCounts.value).reduce((sum, count) => sum + count, 0))
-const restoreInput = ref<HTMLInputElement | null>(null)
 const showAnswerSheet = ref(false)
 const importDialogChoice = ref<'new' | 'existing'>('new')
 const importDialogTargetNotebook = ref('')
@@ -246,7 +244,7 @@ function openAiSettings() {
 
 function jump(index: number) {
   if (index < 0 || index >= totalQuestions.value) return
-  void handleJumpTo(index, isDarkMode.value)
+  handleJumpTo(index)
   void nextTick(() => window.scrollTo({ top: 0, behavior: 'smooth' }))
 }
 

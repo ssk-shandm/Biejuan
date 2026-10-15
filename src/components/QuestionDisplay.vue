@@ -29,10 +29,12 @@
         :total-questions="totalQuestions"
         :disabled="!!disabled"
         :sub-results="subResults"
+        :sub-drafts="subDrafts"
         :show-results="showResult"
         :app-mode="appMode"
         @submit="emit('compound-submit', $event)"
         @submit-sub="(subId: number, userAnswer: string) => emit('compound-submit-sub', subId, userAnswer)"
+        @answer-update="(subId: number, userAnswer: string) => emit('sub-answer-update', subId, userAnswer)"
       />
 
       <div v-else-if="isRadio">
@@ -145,13 +147,15 @@
     </button>
 
     <div v-if="isEndorseMode" class="endorse-answer-block">
-      <p class="endorse-text"><strong>正确答案：</strong></p>
-      <MarkdownContent class="markdown-answer-block" :content="question.answer" :format="question.answerFormat" />
+      <section class="endorse-section">
+        <div class="endorse-section-title">正确答案</div>
+        <MarkdownContent class="markdown-answer-block" :content="question.answer" :format="question.answerFormat" />
+      </section>
 
-      <div class="endorse-text" v-if="question.explanation">
-        <strong>解析：</strong>
+      <section class="endorse-section endorse-explanation" v-if="question.explanation">
+        <div class="endorse-section-title">解析</div>
         <MarkdownContent :content="question.explanation" :format="question.explanationFormat" />
-      </div>
+      </section>
     </div>
 
     <ResultDisplay
@@ -173,6 +177,25 @@
     </div>
 
     <div class="wrong-question-controls" v-if="isInPracticeMode || isInWrongMode">
+      <button
+        type="button"
+        class="wrong-btn copy-question-btn"
+        :class="`copy-question-btn--${copyState}`"
+        :disabled="isCopying"
+        :aria-label="copyState === 'idle' ? '复制题目和选项' : copyLabel"
+        :aria-busy="isCopying"
+        @click="handleCopyQuestion"
+      >
+        <svg v-if="copyState !== 'idle'" class="copy-question-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path v-if="copyState === 'success'" class="copy-checkmark" d="m5 12 4 4L19 6" />
+          <template v-else-if="copyState === 'error'">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 8v4m0 4h.01" />
+          </template>
+          <path v-else-if="isCopying" d="M21 12a9 9 0 1 1-9-9" />
+        </svg>
+        <span aria-live="polite" aria-atomic="true">{{ copyLabel }}</span>
+      </button>
       <button v-if="isInPracticeMode && !isWrongQuestion && !isGuessedRight" @click="addToWrong" class="wrong-btn add">
         添加到错题
       </button>
@@ -193,16 +216,26 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { Question, UserAnswer, AppMode, SubAnswer } from '../types'
 import ResultDisplay from './ResultDisplay.vue'
 import CompoundQuestion from './CompoundQuestion.vue'
 import MarkdownContent from './MarkdownContent.vue'
 import { inheritedContentFormat } from '../utils/contentFormat'
 import { useQuizStore } from '../stores/quizStore'
-import { showToast } from '../composables/useToast'
+import { copyTextToClipboard, formatQuestionForClipboard } from '../utils/questionClipboard'
 
 const quizStore = useQuizStore()
+const copyState = ref<'idle' | 'copying' | 'success' | 'error'>('idle')
+const isCopying = computed(() => copyState.value === 'copying')
+const copyLabel = computed(() => ({
+  idle: '复制题目',
+  copying: '复制中…',
+  success: '已复制',
+  error: '复制失败，重试',
+})[copyState.value])
+let copyResetTimer: ReturnType<typeof setTimeout> | undefined
+let copyRequestId = 0
 
 const props = withDefaults(
   defineProps<{
@@ -215,6 +248,7 @@ const props = withDefaults(
     isCorrect?: boolean
     appMode: AppMode
     subResults?: Map<number, SubAnswer>
+    subDrafts?: Record<number, string>
     bankFile?: string
     wrongEntryId?: number
   }>(),
@@ -230,6 +264,7 @@ const emit = defineEmits<{
   (e: 'submit'): void
   (e: 'compound-submit', subAnswers: Map<number, SubAnswer>): void
   (e: 'compound-submit-sub', subId: number, userAnswer: string): void
+  (e: 'sub-answer-update', subId: number, userAnswer: string): void
 }>()
 
 const judgmentOptions = { A: '正确', B: '错误' }
@@ -251,12 +286,9 @@ const blanks = ref<string[]>([])
 
 // 当 modelValue 变化时（如加载已有答案），同步 blanks
 watch(
-  () => props.modelValue,
-  (val) => {
-    if (isMultiBlank.value && typeof val === 'string') {
-      const parts = val.split('；')
-      blanks.value = [...parts]
-    }
+  () => [props.modelValue, props.question] as const,
+  ([val]) => {
+    blanks.value = isMultiBlank.value && typeof val === 'string' ? val.split('；') : []
   },
   { immediate: true },
 )
@@ -309,10 +341,41 @@ const isGuessedRight = computed(() =>
   props.bankFile ? quizStore.isGuessedRight(props.question.number, props.bankFile) : false,
 )
 
+function resetCopyFeedback() {
+  clearTimeout(copyResetTimer)
+  copyResetTimer = undefined
+  copyRequestId++
+  copyState.value = 'idle'
+}
+
+watch(
+  () => [props.question, props.question.number, props.questionNumber, props.bankFile, props.appMode],
+  resetCopyFeedback,
+  { flush: 'sync' },
+)
+onBeforeUnmount(resetCopyFeedback)
+
+async function handleCopyQuestion() {
+  if (isCopying.value) return
+  clearTimeout(copyResetTimer)
+  const requestId = ++copyRequestId
+  copyState.value = 'copying'
+  let outcome: 'success' | 'error'
+  try {
+    await copyTextToClipboard(formatQuestionForClipboard(props.question))
+    outcome = 'success'
+  } catch {
+    outcome = 'error'
+  }
+  // Ignore a pending copy result after navigation or unmount.
+  if (requestId !== copyRequestId) return
+  copyState.value = outcome
+  copyResetTimer = setTimeout(resetCopyFeedback, outcome === 'success' ? 2000 : 3000)
+}
+
 function addToWrong() {
   if (props.bankFile && !quizStore.containsWrongEntry(props.question.number, props.bankFile)) {
     quizStore.addWrongEntry(props.question.number, props.bankFile)
-    showToast('已添加到错题本')
   }
 }
 
@@ -426,6 +489,8 @@ function getOptionClass(key: string) {
 }
 #question-meta {
   display: flex;
+  align-items: center;
+  gap: 12px;
   justify-content: space-between;
   font-size: 0.9rem;
   color: var(--color-text-secondary);
@@ -436,6 +501,77 @@ function getOptionClass(key: string) {
   color: var(--color-text-tag);
   padding: 4px 8px;
   border-radius: 6px;
+}
+.copy-question-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: calc(3.6rem + 32px);
+  background-color: var(--color-bg-btn-secondary);
+  color: var(--color-text-btn-secondary);
+  transition: background-color 0.2s, color 0.2s, transform 0.15s;
+}
+.copy-question-btn:hover {
+  background-color: var(--color-bg-btn-secondary-hover);
+}
+.copy-question-btn:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+.copy-question-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.copy-question-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+}
+.copy-question-btn--success,
+.copy-question-btn--success:hover {
+  background-color: var(--color-bg-btn-success);
+  color: var(--color-text-btn-success);
+  animation: copy-confirm 0.3s ease-out;
+}
+.copy-question-btn--error,
+.copy-question-btn--error:hover {
+  background-color: var(--color-bg-btn-danger);
+  color: var(--color-text-btn-danger);
+}
+.copy-question-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+.copy-question-btn--copying .copy-question-icon {
+  animation: copy-spin 0.8s linear infinite;
+}
+.copy-checkmark {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 0;
+  animation: copy-check 0.25s ease-out;
+}
+@keyframes copy-confirm {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+@keyframes copy-check {
+  from { stroke-dashoffset: 24; }
+  to { stroke-dashoffset: 0; }
+}
+@keyframes copy-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .copy-question-btn,
+  .copy-question-icon,
+  .copy-checkmark {
+    animation: none !important;
+    transition: none !important;
+  }
+  .copy-question-btn:active:not(:disabled) {
+    transform: none;
+  }
 }
 
 #question-images {
@@ -608,21 +744,34 @@ input:disabled {
   opacity: 1;
 }
 .endorse-answer-block {
+  display: grid;
+  gap: 12px;
   margin-top: 20px;
-  padding: 15px;
-  background-color: var(--color-bg-explanation);
-  border-left: 5px solid var(--color-border-explanation);
-  border-radius: 4px;
 }
-.endorse-text {
-  margin: 5px 0;
+.endorse-section {
+  padding: 14px 16px;
+  border: 1px solid var(--color-border-divider);
+  border-left: 4px solid var(--color-border-correct-left);
+  border-radius: 10px;
+  background: var(--color-bg-surface, var(--color-bg-container));
+  color: var(--color-text-primary);
+}
+.endorse-section-title {
+  margin-bottom: 10px;
+  color: var(--color-text-heading);
+  font-size: .92rem;
+  font-weight: 700;
+}
+.endorse-explanation {
+  border-left-color: var(--color-border-explanation);
+  background: var(--color-bg-explanation);
   color: var(--color-text-explanation);
-  font-size: 1rem;
-  white-space: pre-wrap;
+}
+.endorse-explanation .endorse-section-title {
+  color: var(--color-text-explanation);
 }
 .markdown-answer-block {
-  margin: 8px 0;
-  line-height: 1.6;
+  line-height: 1.7;
 }
 .markdown-answer-block :deep(pre) {
   margin: 10px 0;

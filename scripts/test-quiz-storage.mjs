@@ -39,7 +39,7 @@ async function settle() {
   }
 }
 
-function loadStore(t, { local = storage(), desktop = false, file = {} } = {}) {
+function loadStore(t, { local = storage(), desktop = false, file = {}, source } = {}) {
   const timers = new Map()
   const events = new Map()
   const toasts = []
@@ -51,6 +51,21 @@ function loadStore(t, { local = storage(), desktop = false, file = {} } = {}) {
     '../composables/useToast': { showToast: message => toasts.push(message) },
     '../utils/questionSchema': {},
     '../services/fileService': {},
+    '@tauri-apps/api/core': {
+      invoke: async (command, { name, content }) => {
+        if (command === 'read_app_document') {
+          if (file.readGate) await file.readGate
+          if (file.failReads) throw new Error('read denied')
+          return file.content ?? null
+        }
+        assert.equal(command, 'write_app_document')
+        assert.equal(name, 'quiz-data.json')
+        writes.push(content)
+        if (file.writeGate) await file.writeGate(content)
+        if (file.failWrites) throw new Error('write denied')
+        file.content = content
+      },
+    },
     '@tauri-apps/api/path': { appDataDir: async () => '/data', join: async (...parts) => parts.join('/') },
     '@tauri-apps/plugin-fs': {
       exists: async path => path === '/data' || file.content != null,
@@ -94,7 +109,7 @@ function loadStore(t, { local = storage(), desktop = false, file = {} } = {}) {
     })
     return module.exports
   }
-  const api = evaluate(readFileSync(new URL('../src/stores/quizStore.ts', import.meta.url), 'utf8'))
+  const api = evaluate(source ?? readFileSync(new URL('../src/stores/quizStore.ts', import.meta.url), 'utf8'))
   const store = api.useQuizStore(pinia.createPinia())
   t.after(() => store.$dispose())
   return {
@@ -193,6 +208,56 @@ test('native hydration wins over stale browser data and never triggers an automa
   await app.flush()
   assert.equal(app.store.notebooks[0].name, 'native')
   assert.equal(app.writes.length, 0)
+})
+
+test('v0.1.6 native notebook format hydrates unchanged during a v0.2 startup', async t => {
+  const legacy = snapshot('v0.1.6 notebook')
+  // v0.1.6 intentionally had no schemaVersion/appVersion fields.
+  const app = loadStore(t, { desktop: true, file: { content: JSON.stringify(legacy) }, local: storage() })
+  await app.flush()
+  assert.equal(app.store.notebooks[0].name, 'v0.1.6 notebook')
+  assert.equal(app.store.wrongEntries.length, 1)
+  assert.equal(app.writes.length, 0)
+})
+
+test('real v0.1.6 store writes survive upgrading, empty browser storage, another save and restart', async t => {
+  const source = readFileSync(new URL('./fixtures/quizStore-v0.1.6.ts.txt', import.meta.url), 'utf8')
+  const file = {}
+  const old = loadStore(t, { desktop: true, file, source })
+  await old.flush()
+  const one = old.store.createNotebook('旧版第一本', 'first.json')
+  const two = old.store.createNotebook('旧版第二本', 'second.json')
+  old.store.addWrongEntryToNotebook(10, 'first.json', one.id)
+  old.store.addWrongEntryToNotebook(20, 'second.json', two.id)
+  old.store.addGuessedRight(30, 'first.json')
+  await old.flush()
+  const original = JSON.parse(file.content)
+  assert.equal(original.schemaVersion, undefined)
+  old.store.$dispose()
+  // Reinstallation/WebView reset must not require a manual export/import.
+  const upgraded = loadStore(t, { desktop: true, file, local: storage() })
+  await upgraded.store.persistedDataReady
+  assert.deepEqual(JSON.parse(upgraded.store.exportAllDataAsJson()).notebooks, original.notebooks)
+  assert.deepEqual(JSON.parse(upgraded.store.exportAllDataAsJson()).wrongEntries, original.wrongEntries)
+  assert.equal(upgraded.writes.length, 0)
+  upgraded.store.addWrongEntryToNotebook(11, 'first.json', one.id)
+  await upgraded.flush()
+  upgraded.store.$dispose()
+  const restarted = loadStore(t, { desktop: true, file, local: storage() })
+  await restarted.store.persistedDataReady
+  assert.equal(restarted.store.wrongEntries.length, 3)
+  assert.equal(restarted.store.notebooks.length, 2)
+  assert.equal(restarted.store.guessedRightBank.length, 1)
+  assert.equal(restarted.store.getEntriesByNotebook(one.id).length, 2)
+})
+
+test('a failed pending native write rejects the flush used before installing an update', async t => {
+  const app = loadStore(t, { desktop: true, file: { failWrites: true } })
+  await app.store.persistedDataReady
+  app.store.addWrongEntry(1, 'bank.json')
+  await app.flush()
+  await assert.rejects(app.store.flushSavedData(), /write denied/)
+  assert.equal(JSON.parse(app.local.getItem(KEY)).wrongEntries.length, 1)
 })
 
 test('corrupt or unreadable native data is preserved rather than overwritten by fallback data', async t => {

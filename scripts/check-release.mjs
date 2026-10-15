@@ -5,6 +5,9 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
+const tauriConfig = JSON.parse(readFileSync(join(root, 'src-tauri/tauri.conf.json'), 'utf8'))
+assert.ok(!tauriConfig.bundle.resources || Object.keys(tauriConfig.bundle.resources).length === 0,
+  'native builds must not release an external public resource directory')
 for (const directory of ['.tmp-build/public', 'dist']) {
   const path = join(root, directory)
   assert.ok(existsSync(path), directory + ' is missing; run npm run build first')
@@ -17,4 +20,4 @@ for (const directory of ['.tmp-build/public', 'dist']) {
   const defaults = JSON.parse(readFileSync(join(path, 'config/examples/llm-user-config.example.json'), 'utf8'))
   assert.equal(String(defaults.provider.apiKey ?? '').trim(), '', directory + ': default API key must be empty')
 }
-console.log('[release:check] OK - staged and Web assets exclude personal banks, images and notebooks; public defaults contain no API key')
+console.log('[release:check] OK - native bundles have no external public resources; staged and Web assets exclude personal data; public defaults contain no API key')

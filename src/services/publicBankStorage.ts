@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { usePlatform } from '../composables/usePlatform'
 import { normalizeQuestionBank } from '../utils/questionSchema'
+import { inspectBank, bankIssueReport } from '../utils/bankImport'
 import { GENERATED_BANK_PREFIX, deleteGeneratedBanks } from './generatedBankStorage'
 import { PUBLIC_BANKS_CHANGED } from './publicBankWriter'
 
@@ -42,6 +43,8 @@ export async function readPublicBank(file: string, name = file) {
   }
   const questions = normalizeQuestionBank(raw, name)
   if (questions.length === 0) throw new Error('题库中没有题目')
+  const report = inspectBank(text, name)
+  if (report.issues.length) throw new Error(bankIssueReport(report))
   return questions
 }
 

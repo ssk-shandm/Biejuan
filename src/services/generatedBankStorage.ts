@@ -4,8 +4,8 @@ import type { DocumentImageAsset } from '../utils/documentAssets'
 export const GENERATED_BANKS_CHANGED = 'generated-banks-changed'
 export const GENERATED_BANK_PREFIX = 'generated:'
 
-type SavedImage = { fileName: string; blob: Blob }
-type SavedBank = { file: string; name: string; content: string; images: SavedImage[] }
+export type SavedImage = { fileName: string; blob: Blob }
+export type SavedBank = { file: string; name: string; content: string; images: SavedImage[] }
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -57,6 +57,13 @@ export async function listGeneratedBanks(): Promise<{ name: string; file: string
   })
 }
 
+export async function replaceGeneratedBanks(banks: SavedBank[]): Promise<void> {
+  await withStore<void>('readwrite', store => {
+    store.clear()
+    for (const bank of banks) store.put(bank)
+  })
+}
+
 function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -78,7 +85,7 @@ export async function readStoredGeneratedBank(file: string): Promise<SavedBank> 
 export async function readGeneratedBank(file: string): Promise<unknown> {
   const bank = await readStoredGeneratedBank(file)
   // Keep original JSON intact for downloads; inline image data only in the loaded copy.
-  let content = bank.content
+  let content = JSON.stringify(JSON.parse(bank.content.replace(/^\uFEFF/, '')))
   const directory = decodeURIComponent(file.slice(GENERATED_BANK_PREFIX.length))
   for (const image of bank.images) {
     const path = `/images/${directory}/${image.fileName}`

@@ -122,15 +122,20 @@ export function useVersion() {
     updateError.value = ''
     addRuntimeLog('info', 'Starting update download: ' + info.installerName)
 
-    const { invoke } = await import('@tauri-apps/api/core')
-    const { listen } = await import('@tauri-apps/api/event')
-
     const unlisteners: Array<() => void> = []
     downloadProgress.value = ''
     // 终端日志只按 10% 步进记录，界面上的进度文本则实时刷新
     let lastLoggedStep = -1
 
     try {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const { listen } = await import('@tauri-apps/api/event')
+      const { useQuizStore } = await import('../stores/quizStore')
+      const { persistLearningState, drainLearningWrites } = await import('../services/learningPersistence')
+      // Do not exit into an installer while the final notebook save is pending.
+      await useQuizStore().flushSavedData()
+      await persistLearningState()
+      await drainLearningWrites({ requireSaved: true })
       unlisteners.push(await listen<{ downloaded: number; total: number | null; percent: number | null; fileName: string }>(
         'update-download-progress',
         (event) => {
@@ -150,7 +155,13 @@ export function useVersion() {
         downloadProgress.value = '正在启动安装程序…'
         addRuntimeLog('info', '安装包已保存到：' + event.payload + '，正在启动安装程序')
       }))
+      // This command prepares the download only; installation is a separate
+      // handshake so edits made during the download can finish saving first.
       await invoke('download_and_install_update', { url: info.installerUrl, fileName: info.installerName })
+      await useQuizStore().flushSavedData()
+      await persistLearningState()
+      await drainLearningWrites({ requireSaved: true })
+      await invoke('install_prepared_update')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       updateError.value = message

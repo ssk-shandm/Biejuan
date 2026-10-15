@@ -42,6 +42,7 @@
       <Transition name="mobile-reveal">
         <div v-if="showBanks" id="mobile-bank-manager" class="mobile-settings-expanded">
           <BankManager :banks="banks" :selected-bank="selectedBank" />
+          <DataSafetyPanel />
         </div>
       </Transition>
     </div>
@@ -61,6 +62,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted } from 'vue'
 import AiModelSettings from '../AiModelSettings.vue'
+import DataSafetyPanel from '../DataSafetyPanel.vue'
 import BankManager from '../BankManager.vue'
 import { DEFAULT_LLM_BASE_URL, useLlmSettings } from '../../composables/useLlmSettings'
 import type { BankEntry } from '../../composables/useQuiz'

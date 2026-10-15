@@ -1,6 +1,6 @@
 import type { ContentFormat } from '../types'
 
-export function normalizeContentFormat(value: unknown, fallback: ContentFormat = 'text'): ContentFormat {
+export function normalizeContentFormat(value: unknown, fallback: ContentFormat = 'markdown'): ContentFormat {
   const format = String(value ?? '').trim().toLowerCase()
   if (['text', 'txt', 'plain-text', 'plaintext'].includes(format)) return 'text'
   if (format === 'markdown' || format === 'md') return 'markdown'
@@ -10,5 +10,5 @@ export function normalizeContentFormat(value: unknown, fallback: ContentFormat =
 }
 
 export function inheritedContentFormat(format: ContentFormat): ContentFormat {
-  return format === 'mermaid' || format === 'plantuml' ? 'text' : normalizeContentFormat(format)
+  return format === 'mermaid' || format === 'plantuml' ? 'markdown' : normalizeContentFormat(format)
 }

@@ -23,7 +23,8 @@
 
         <div id="final-score-container">
           <h3>考试结束！</h3>
-          <p id="final-score-text">你答对了 {{ score }} / {{ totalQuestions }} 题。</p>
+          <p id="final-score-text">可自动判分题目全对 {{ score }} / {{ scoredQuestions }} 题。</p>
+          <p class="score-note">复合题按整题全对计 1 题，子题正确率单独显示；简答题只对照参考答案，不计入分母。</p>
           <button id="restart-btn" @click="emit('restart', 'start')">返回首页</button>
         </div>
       </div>
@@ -91,7 +92,7 @@
               v-if="getSubUserAnswer(question.number, sub.id) !== null"
               class="review-sub-answers"
             >
-              <span class="review-sub-user">你的答案：{{ getSubUserAnswer(question.number, sub.id) || '（未作答）' }}</span>
+              <div class="review-sub-user">你的答案：<MarkdownContent :content="getSubUserAnswer(question.number, sub.id) || '（未作答）'" :format="sub.answerFormat" /></div>
               <div class="review-sub-correct">正确答案：<MarkdownContent :content="formatSubAnswer(sub)" :format="sub.answerFormat" /></div>
             </div>
           </div>
@@ -108,7 +109,6 @@ import AnswerCard from './AnswerCard.vue'
 import QuestionDisplay from './QuestionDisplay.vue'
 import ResultDisplay from './ResultDisplay.vue'
 import MarkdownContent from './MarkdownContent.vue'
-
 // 定义 props
 const props = defineProps<{
   questions: Question[]
@@ -129,6 +129,7 @@ const isAnswerCardExpanded = ref(true)
 const currentQuestionIndex = ref(0) // 用于高亮答题卡
 const shuffledQuestions = computed(() => props.questions)
 const totalQuestions = computed(() => props.questions.length)
+const scoredQuestions = computed(() => props.questions.filter(question => question.type !== '简答题').length)
 
 // 核心：筛选题目 (要求 4)
 const filteredQuestions = computed(() => {
