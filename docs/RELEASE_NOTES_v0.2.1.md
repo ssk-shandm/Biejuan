@@ -1,6 +1,6 @@
 # v0.2.1 发行说明
 
-日期：2026-10-20。状态：补丁版本已完成构建及自动化验证，下载与发布状态以 [GitHub Release](https://github.com/ssk-shandm/Biejuan/releases/tag/v0.2.1) 为准；Windows 实际安装、覆盖升级和卸载验收尚未执行。
+日期：2026-10-20。状态：补丁版本已完成构建及自动化验证，已发布 [GitHub Release](https://github.com/ssk-shandm/Biejuan/releases/tag/v0.2.1)；Windows 实际安装、覆盖升级和卸载验收尚未执行。
 
 ## 用户可见变化
 
