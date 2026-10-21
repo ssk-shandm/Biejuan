@@ -2,7 +2,7 @@
 
 仓库根目录保留 [README](../README.md)；本文中的命令均在仓库根目录执行。发行前同步更新 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json`、`src/config/appInfo.ts` 版本号。
 
-版本状态（2026-10-21）：本次补丁版本字段统一为 v0.2.3；发布状态、资产和验证边界见 [v0.2.3 发行说明](RELEASE_NOTES_v0.2.3.md)。真实 Windows 安装、覆盖升级、卸载和重装验收仍待执行，不以自动化结果替代人工验收。
+版本状态（2026-10-21）：v0.2.3 补丁已发布 GitHub Release，版本字段统一为 v0.2.3；发布状态、资产和验证边界见 [v0.2.3 发行说明](RELEASE_NOTES_v0.2.3.md)。真实 Windows 安装、覆盖升级、卸载和重装验收仍待执行，不以自动化结果替代人工验收。
 
 ## 环境
 
