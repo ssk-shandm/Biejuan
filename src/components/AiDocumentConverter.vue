@@ -1,5 +1,11 @@
 <template>
-  <section class="ai-converter">
+  <section
+    class="ai-converter"
+    @dragenter.prevent="onDragEnter"
+    @dragover.prevent="onDragOver"
+    @dragleave.prevent="onDragLeave"
+    @drop.prevent="handleDrop"
+  >
     <div class="panel-card intro-card">
       <div>
         <span class="section-label">统一题库格式</span>
@@ -26,10 +32,6 @@
         class="file-picker"
         :class="{ dragging: isDragging, busy: isExtracting }"
         data-tour="converter-drop"
-        @dragenter.prevent="onDragEnter"
-        @dragover.prevent="onDragOver"
-        @dragleave.prevent="onDragLeave"
-        @drop.prevent="handleDrop"
       >
         <input ref="fileInput" multiple type="file" :accept="fileAccept" :disabled="isExtracting || isConverting" @change="handleFileChange" />
         <span class="file-icon">{{ isExtracting ? '…' : '＋' }}</span>
@@ -43,7 +45,7 @@
       <div v-if="sourceFiles.length" class="document-list">
         <div v-for="item in sourceFiles" :key="item.id" class="document-row" :class="item.status">
           <span>{{ item.status === 'ready' ? '✓' : item.status === 'error' ? '!' : '…' }}</span>
-          <div><strong>{{ item.name }}</strong><small>{{ item.message }}</small></div>
+          <div><strong>{{ item.name }}</strong><small>{{ item.status === 'error' ? '未能读取，详情见运行终端' : item.message }}</small></div>
         </div>
       </div>
       <label class="privacy-check"><input v-model="allowRemoteProcessing" type="checkbox" :disabled="isConverting" /><span>我确认可以将提取后的文本发送到已配置的第三方模型服务。</span></label>
@@ -52,18 +54,7 @@
           <button class="primary-action" type="button" :disabled="isConverting || isExtracting || frameworkStatus!=='ready'" @click="convertDocument">{{ isConverting ? '正在转换…' : '开始转换为题库 JSON' }}</button>
           <button v-if="isConverting" class="secondary-action" type="button" @click="cancelConversion">取消</button>
         </div>
-        <div class="prompt-state" :class="frameworkStatus"><span class="state-dot"></span>{{ promptName || frameworkStatusText }}</div>
       </div>
-      <p v-if="convertMessage" class="inline-message" :class="convertMessageType">{{ convertMessage }}</p>
-    </div>
-
-    <div v-if="outputText" class="panel-card output-panel">
-      <div class="output-heading">
-        <div><span class="section-label">转换完成</span><h4>题库 JSON</h4><p>「{{ outputBankName }}」{{ outputQuestionCount }} 道题<span v-if="outputSummary">（{{ outputSummary }}）</span><span v-if="imageAssets.length">，已提取 {{ imageAssets.length }} 张图片</span>，{{ outputSaved ? '已保存到本机题库，返回主页即可选择。' : '尚未保存到本机题库，可重试保存或先下载 JSON。' }}请人工检查答案和图表引用。</p></div>
-        <p v-if="outputSaved && outputLocation">保存位置：{{ outputLocation }}</p>
-        <div class="inline-actions"><button v-if="!outputSaved" class="primary-action compact" @click="retrySave">重试保存到题库</button><button class="secondary-action" @click="copyOutput">复制</button><button class="secondary-action" :disabled="!imageAssets.length" @click="downloadPackage">备份题库包（含图片）</button><button class="secondary-action" @click="downloadOutput">备份 JSON</button></div>
-      </div>
-      <textarea :value="outputText" rows="16" readonly aria-label="转换后的题库 JSON"></textarea>
     </div>
   </section>
 </template>
@@ -79,7 +70,6 @@ import { pdfItemsToText } from '../utils/pdfText'
 import { createLlmClient, type LlmLogLevel } from '../services/llmClient'
 import { convertDocumentToQuestionBank, type ValidationResult } from '../services/questionBankConverter'
 import { savePublicBank } from '../services/publicBankWriter'
-import { saveExportBlob } from '../services/fileService'
 import { normalizeQuestionBank } from '../utils/questionSchema'
 import { usePlatform } from '../composables/usePlatform'
 
@@ -98,15 +88,12 @@ const frameworkStatus=ref<'loading'|'ready'|'error'>('loading'), frameworkError=
 const bankName=ref(''), outputBankName=ref(''), startNumber=ref(1), sourceName=ref(''), sourceExtension=ref(''), sourceText=ref(''), sourceFiles=ref<SourceFileState[]>([])
 const allowRemoteProcessing=ref(false), isDragging=ref(false), isExtracting=ref(false), isConverting=ref(false)
 const imageAssets=ref<DocumentImageAsset[]>([])
-const outputLocation=ref('')
-const convertMessage=ref(''), convertMessageType=ref<'success'|'error'>('success'), outputText=ref(''), outputQuestionCount=ref(0), outputSaved=ref(false), outputSummary=ref('')
+const outputText=ref('')
 const fileInput=ref<HTMLInputElement|null>(null)
 let schemaValidator: (((value:unknown)=>boolean)&{errors?:SchemaError[]|null})|null=null
 let abortController: AbortController|null=null
 
 const modelConfigured=computed(()=>Boolean(provider.baseUrl.trim()&&provider.baseUrl!==DEFAULT_LLM_BASE_URL&&provider.model.trim()&&provider.apiKey.trim()))
-const promptName=computed(()=>loadedFramework.value?.prompts.convert?.name??'')
-const frameworkStatusText=computed(()=>frameworkStatus.value==='ready'?'预装 Prompt 已就绪':frameworkStatus.value==='error'?(frameworkError.value||'Prompt 读取失败'):'正在读取预装 Prompt')
 const sourceFormatLabel=computed(()=>({docx:'Word 文档',pptx:'PowerPoint 演示文稿',pdf:'PDF 文档',xlsx:'Excel 工作簿',xlsm:'Excel 工作簿',txt:'纯文本',md:'Markdown',markdown:'Markdown',json:'JSON',csv:'CSV',batch:'多个文件'}[sourceExtension.value]??'文档'))
 
 onMounted(async()=>{
@@ -151,7 +138,7 @@ async function handleDrop(event:DragEvent){
 async function readSourceFiles(files:File[]){
   if(isExtracting.value||isConverting.value)return
   sourceFiles.value=files.map((file,index)=>({id:`${index}-${file.name}-${file.lastModified}`,name:file.name,status:'extracting' as const,message:'等待提取'}))
-  isExtracting.value=true;convertMessage.value='';outputText.value='';outputSaved.value=false;outputQuestionCount.value=0;outputSummary.value='';sourceText.value='';imageAssets.value=[]
+  isExtracting.value=true;outputText.value='';sourceText.value='';imageAssets.value=[]
   addTerminalLine('command',`extract --batch ${files.length}`)
   const sections:string[]=[]
   try{
@@ -173,8 +160,7 @@ async function readSourceFiles(files:File[]){
     }
     sourceText.value=sections.join('\n\n');sourceName.value=files.length===1?files[0]!.name:`${files[0]!.name} 等 ${files.length} 个文件`;sourceExtension.value=files.length===1?(files[0]!.name.split('.').pop()?.toLowerCase()??''):'batch'
     if(!sourceText.value)throw new Error('所选文件均未提取到可用内容。')
-    showConvertMessage(`已提取 ${sourceFiles.value.filter(item=>item.status==='ready').length} 个文件，可开始转换。`,'success')
-  }catch(error){const message=errorMessage(error,'Batch extraction failed');showConvertMessage(message,'error');addTerminalError('Batch extraction failed',error)}
+  }catch(error){addTerminalError('Batch extraction failed',error)}
   finally{isExtracting.value=false;if(fileInput.value)fileInput.value.value=''}
 }
 
@@ -257,8 +243,8 @@ function validateBeforeConvert(){if(frameworkStatus.value!=='ready'||!loadedFram
 
 async function convertDocument(){
   emit('started')
-  const validationError=validateBeforeConvert();if(validationError){showConvertMessage(validationError,'error');addTerminalLine('error',validationError);showGlobalToast('题库转换失败，请查看终端日志中的详细错误。','error',8000);return}
-  isConverting.value=true;outputText.value='';outputSaved.value=false;outputQuestionCount.value=0;outputSummary.value='';convertMessage.value='正在转换，请在终端查看实时进度。';convertMessageType.value='success'
+  const validationError=validateBeforeConvert();if(validationError){addTerminalLine('error',validationError);showGlobalToast(validationError,'error',8000);return}
+  isConverting.value=true;outputText.value=''
   abortController=new AbortController()
   const connection={baseUrl:provider.baseUrl,model:provider.model,apiKey:provider.apiKey,temperature:Number(provider.temperature),maxOutputTokens:Number(provider.maxOutputTokens),timeoutMs:Number(provider.timeoutMs)}
   try{
@@ -271,20 +257,17 @@ async function convertDocument(){
       resolveImagePath:imagePathFor,signal:abortController.signal,
     })
     outputBankName.value=result.bankName
-    outputQuestionCount.value=result.questions.length
     outputText.value=JSON.stringify(result.questions,null,2)
     const {stats}=result,notes=[`${stats.answered}/${stats.questions} 道题带答案`]
     if(stats.answersMatched)notes.push(`其中 ${stats.answersMatched} 道来自独立答案区`)
     if(stats.dropped)notes.push(`${stats.dropped} 道题未通过校验被丢弃`)
     if(stats.failedRanges.length)notes.push(`第 ${stats.failedRanges.join('、')} 行转换失败`)
-    outputSummary.value=notes.join('，')
-    addTerminalLine('success',`JSON 汇总完成：${result.questions.length} 道题（${outputSummary.value}）`)
+    addTerminalLine('success',`JSON 汇总完成：${result.questions.length} 道题（${notes.join('，')}）`)
     addTerminalLine('success','question-bank.schema.json 严格校验通过。')
     await persistOutput()
-    showConvertMessage(`转换完成，${result.questions.length} 道题已保存到本机题库，返回主页即可选择。`,'success')
+    addTerminalLine('success',`已保存题库「${outputBankName.value}」到本机题库，返回主页即可选择。`)
     showGlobalToast(`题库转换完成，共输出 ${result.questions.length} 道题。`,'success')
   }catch(error){
-    const message=errorMessage(error,'Conversion failed');showConvertMessage(message,'error')
     if(abortController?.signal.aborted){addTerminalLine('warning','转换已取消。');return}
     addTerminalError('Conversion failed',error,'Model: '+(provider.model||'not configured')+'\nEndpoint: '+(provider.baseUrl?buildChatCompletionsEndpoint(provider.baseUrl):'not configured'))
     showGlobalToast('题库转换失败，请查看终端日志中的详细错误。','error',8000)
@@ -298,19 +281,11 @@ async function persistOutput(){
   if (!questions.length) throw new Error('转换结果中没有有效题目，无法保存到本机题库')
   try {
     const saved = await savePublicBank(outputBankName.value, safeImageDirectoryName(outputBankName.value), outputText.value, imageAssets.value)
-    outputLocation.value = saved.location
-    outputSaved.value = true
+    // 缺答案不阻断保存，但要在终端逐题说明是哪几道题
+    for (const warning of saved.warnings) addTerminalLine('warning', warning)
+    if (saved.warnings.length) addTerminalLine('warning', `以上 ${saved.warnings.length} 处缺少答案，题目已保存，可在题库中补全后使用。`)
   } catch (error) {
-    throw new Error(`题目已解析，但保存到本机题库失败（可先下载 JSON 备份）：${errorMessage(error)}`)
-  }
-}
-
-async function retrySave(){
-  try {
-    await persistOutput()
-    showConvertMessage('已保存到本机题库，返回主页即可选择。','success')
-  } catch (error) {
-    showConvertMessage(errorMessage(error),'error')
+    throw new Error(`题目已解析，但保存到本机题库失败：${errorMessage(error)}`)
   }
 }
 
@@ -324,27 +299,6 @@ async function getSchemaValidator(){
 }
 async function validateQuestionBank(value:unknown):Promise<ValidationResult>{const validator=await getSchemaValidator(),valid=validator(value);return{valid,errors:valid?'':formatSchemaErrors(validator.errors)}}
 function formatSchemaErrors(errors:SchemaError[]|null|undefined){return errors?.length?errors.slice(0,20).map((error,index)=>`${index+1}. ${error.instancePath||'/'} ${error.message||error.keyword||'校验失败'}`).join('\n'):'未知 Schema 错误'}
-function showConvertMessage(message:string,type:'success'|'error'){convertMessage.value=message;convertMessageType.value=type}
-async function copyOutput(){try{await navigator.clipboard.writeText(outputText.value);showConvertMessage('转换结果已复制到剪贴板。','success')}catch{showConvertMessage('无法访问剪贴板，请手动复制。','error')}}
-async function downloadOutput(){
-  if(!outputText.value)return
-  const safeName=safeImageDirectoryName(outputBankName.value)
-  try {
-    const saved=await saveExportBlob(`${safeName}.json`,new Blob([outputText.value],{type:'application/json;charset=utf-8'}))
-    if(saved)showConvertMessage('题库 JSON 已保存。','success')
-  } catch(error) {showConvertMessage(`保存 JSON 失败：${errorMessage(error)}`,'error')}
-}
-async function downloadPackage(){
-  if(!outputText.value||!imageAssets.value.length)return
-  try {
-    const JSZip=(await import('jszip')).default,zip=new JSZip(),safeName=safeImageDirectoryName(outputBankName.value)
-    zip.file(`subjects/${safeName}.json`,outputText.value)
-    for(const asset of imageAssets.value)zip.file(`images/${safeName}/${asset.fileName}`,asset.blob)
-    const blob=await zip.generateAsync({type:'blob'})
-    const saved=await saveExportBlob(`${safeName}-题库包.zip`,blob)
-    if(saved)showConvertMessage(`题库包已保存，包含 ${imageAssets.value.length} 张图片。`,'success')
-  } catch(error) {showConvertMessage(`保存题库包失败：${errorMessage(error)}`,'error')}
-}
 </script>
 
 <style scoped>
@@ -363,8 +317,6 @@ async function downloadPackage(){
 }
 
 .intro-card,
-.card-heading,
-.output-heading,
 .convert-actions {
   display: flex;
   align-items: flex-start;
@@ -387,32 +339,17 @@ p {
   margin-top: 0;
 }
 
-.intro-card h3,
-.card-heading h3 {
+.intro-card h3 {
   margin: 7px 0 6px;
   color: var(--color-text-primary);
 }
 
 .intro-card p,
-.step-heading p,
-.output-heading p {
+.step-heading p {
   max-width: 720px;
   margin-bottom: 0;
   color: var(--color-text-muted);
   line-height: 1.6;
-}
-
-.state-dot {
-  width: 8px;
-  height: 8px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: #9ba6b2;
-}
-
-.ready .state-dot {
-  background: #27ae60;
-  box-shadow: 0 0 0 4px rgba(39, 174, 96, .14);
 }
 
 .format-strip {
@@ -488,8 +425,7 @@ p {
 }
 
 .field input,
-.field textarea,
-.output-panel textarea {
+.field textarea {
   width: 100%;
   box-sizing: border-box;
   border: 1px solid var(--color-border-container);
@@ -503,8 +439,7 @@ p {
 }
 
 .field input:focus,
-.field textarea:focus,
-.output-panel textarea:focus {
+.field textarea:focus {
   border-color: var(--color-accent);
   outline: 2px solid color-mix(in srgb, var(--color-accent) 20%, transparent);
   outline-offset: 1px;
@@ -578,8 +513,7 @@ p {
   margin: 10px 0 0;
 }
 
-.format-note code,
-.output-panel code {
+.format-note code {
   font-family: Consolas, 'Courier New', monospace;
 }
 
@@ -634,40 +568,6 @@ p {
   background: transparent;
 }
 
-.primary-action.compact,
-.secondary-action {
-  padding: 8px 11px;
-  font-size: .82rem;
-}
-
-.prompt-state {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--color-text-muted);
-  font-size: .78rem;
-}
-
-.prompt-state.ready .state-dot { background: #27ae60; }
-.prompt-state.error .state-dot { background: #e06c75; }
-
-.inline-message {
-  margin: 14px 0 0;
-  padding: 10px 12px;
-  border-radius: 7px;
-  font-size: .84rem;
-}
-
-.inline-message.success { color: #1f7a48; background: rgba(39, 174, 96, .12); }
-.inline-message.error { color: #b53a2d; background: rgba(231, 76, 60, .12); }
-
-.output-panel textarea {
-  margin-top: 16px;
-  min-height: 240px;
-  color: var(--color-text-primary);
-  font: .78rem/1.6 Consolas, 'Courier New', monospace;
-}
-
 .inline-actions {
   display: flex;
   flex-wrap: wrap;
@@ -676,8 +576,6 @@ p {
 
 @media (max-width: 720px) {
   .intro-card,
-  .card-heading,
-  .output-heading,
   .convert-actions {
     flex-direction: column;
   }
@@ -688,10 +586,6 @@ p {
 
   .convert-actions {
     align-items: stretch;
-  }
-
-  .prompt-state {
-    justify-content: center;
   }
 }
 </style>

@@ -7,6 +7,8 @@ export interface BankInspection {
   content: string
   questions: Question[]
   issues: BankIssue[]
+  /** 不阻断保存的问题（例如 AI 转换出的待补答案草稿），由调用方决定是否提示 */
+  warnings: BankIssue[]
   types: Record<string, number>
   imageCount: number
 }
@@ -15,10 +17,25 @@ function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }
 
+/** 提示里带上题号与题干摘要，方便直接在题库中定位要补答案的题 */
+function labelWithContent(value: Record<string, unknown>, label: string): string {
+  const content = String(value.content ?? value.question ?? '').replace(/\s+/g, ' ').trim()
+  return content ? `${label}「${content.slice(0, 40)}${content.length > 40 ? '…' : ''}」` : label
+}
+
+export type BankInspectionOptions = {
+  /**
+   * 允许题目暂时没有答案（AI 转换出的草稿）。此时缺答案只记入 warnings，
+   * 不阻断保存；人工导入仍保持严格校验。
+   */
+  allowMissingAnswers?: boolean
+}
+
 /** Collect every actionable error before any file or learning record is written. */
-export function inspectBank(content: string, name: string): BankInspection {
-  const result: BankInspection = { name, content: content.replace(/^\uFEFF/, ''), questions: [], issues: [], types: {}, imageCount: 0 }
+export function inspectBank(content: string, name: string, options: BankInspectionOptions = {}): BankInspection {
+  const result: BankInspection = { name, content: content.replace(/^\uFEFF/, ''), questions: [], issues: [], warnings: [], types: {}, imageCount: 0 }
   const issue = (question: string, field: string, reason: string, suggestion: string) => result.issues.push({ question, field, reason, suggestion })
+  const warn = (question: string, field: string, reason: string, suggestion: string) => result.warnings.push({ question, field, reason, suggestion })
   let raw: unknown
   try { raw = JSON.parse(result.content) } catch {
     issue('文件', 'JSON', 'JSON 语法损坏或编码错误', '使用 UTF-8 保存，检查引号、逗号和括号')
@@ -61,17 +78,21 @@ export function inspectBank(content: string, name: string): BankInspection {
     function validateAnswer(value: Record<string, unknown>, type: string, field: string) {
       if (type === '综合题' || type === '综合应用题') return
       const answer = Array.isArray(value.answer) ? value.answer.map(String).join('') : String(value.answer ?? '').trim()
-      if (!answer) issue(label, field + 'answer', '缺少有效答案', '补齐标准答案后再导入')
+      // 缺答案在人工导入时是硬错误；AI 转换出的草稿允许先保存，由终端逐题提示后补
+      if (!answer) {
+        if (options.allowMissingAnswers) warn(labelWithContent(value, label), field + 'answer', '缺少有效答案', '补齐标准答案后再导入')
+        else issue(label, field + 'answer', '缺少有效答案', '补齐标准答案后再导入')
+      }
       if (value.answer != null && !['string', 'number', 'boolean'].includes(typeof value.answer) && !Array.isArray(value.answer)) issue(label, field + 'answer', '答案类型不合法', '使用字符串或多选答案数组')
       if (['单选题', '多选题'].includes(type)) {
         const options = value.options
         if (!record(options) || Object.keys(options).length < 2 || Object.entries(options).some(([key, text]) => !/^[A-Z]$/.test(key) || typeof text !== 'string' || !text.trim())) {
           issue(label, field + 'options', '选择题至少需要两个非空选项，键为 A-Z', '使用 {"A":"选项一","B":"选项二"} 格式')
-        } else if ((type === '单选题' && answer.length !== 1) || !/^[A-Z]+$/.test(answer) || new Set(answer).size !== answer.length || [...answer].some(key => !(key in options))) {
+        } else if (answer && ((type === '单选题' && answer.length !== 1) || !/^[A-Z]+$/.test(answer) || new Set(answer).size !== answer.length || [...answer].some(key => !(key in options)))) {
           issue(label, field + 'answer', '答案与选项不匹配', '单选填一个选项键，多选填不重复的选项键或数组')
         }
       }
-      if (type === '判断题' && !['A', 'B', 'T', 'F', 'TRUE', 'FALSE', '正确', '错误', '对', '错', 'YES', 'NO', '1', '0'].includes(answer.toUpperCase())) issue(label, field + 'answer', '判断题答案无法识别', '填写 A/B、true/false 或 正确/错误')
+      if (type === '判断题' && answer && !['A', 'B', 'T', 'F', 'TRUE', 'FALSE', '正确', '错误', '对', '错', 'YES', 'NO', '1', '0'].includes(answer.toUpperCase())) issue(label, field + 'answer', '判断题答案无法识别', '填写 A/B、true/false 或 正确/错误')
     }
     if (question) {
       validateAnswer(item, question.type, '')
@@ -101,4 +122,9 @@ export function inspectBank(content: string, name: string): BankInspection {
 
 export function bankIssueReport(inspection: BankInspection): string {
   return [`文件：${inspection.name}`, ...inspection.issues.map(issue => `${issue.question} · ${issue.field}：${issue.reason}；建议：${issue.suggestion}`)].join('\n')
+}
+
+/** 不阻断保存的提示文本，例如 AI 转换出的题目暂时没有答案。 */
+export function bankWarningReport(inspection: BankInspection): string {
+  return inspection.warnings.map(item => `${item.question} · ${item.field}：${item.reason}`).join('\n')
 }

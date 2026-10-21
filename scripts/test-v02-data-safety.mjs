@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict'
+import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { runInNewContext } from 'node:vm'
@@ -329,4 +329,29 @@ test('legacy whole-answer comprehensive questions load as open responses without
     assert.ok(report.issues.some(issue => issue.field === 'subQuestions'))
   }
   assert.ok(inspectBank(JSON.stringify([{ type: '综合题', content: '无答案' }]), 'invalid.json').issues.some(issue => issue.field === 'answer'))
+})
+
+test('AI 转换草稿允许缺答案并逐题提示，人工导入仍拒绝，解析缺失不产生任何提示', () => {
+  const h = harness()
+  const { inspectBank, bankWarningReport } = h.load('src/utils/bankImport.ts')
+  const draft = JSON.stringify([
+    { id: 'q-1', number: 1, type: 'single', content: '没有答案的选择题', options: { A: '甲', B: '乙' }, answer: '' },
+    { id: 'q-2', number: 2, type: 'short-answer', content: '只有题干和答案、没有解析', answer: '参考答案' },
+    { id: 'q-3', number: 3, type: 'compound', content: '综合题', answer: '', subQuestions: [{ id: 1, type: 'fill', content: '小问一', answer: '' }] },
+  ])
+
+  const strict = inspectBank(draft, 'ai.json')
+  assert.deepEqual(Array.from(strict.issues, item => item.field).sort(), ['answer', 'subQuestions[0].answer'], '人工导入仍把缺答案当作硬错误')
+  assert.equal(strict.warnings.length, 0)
+
+  const relaxed = inspectBank(draft, 'ai.json', { allowMissingAnswers: true })
+  assert.equal(relaxed.issues.length, 0, '缺答案不得阻断 AI 转换保存')
+  assert.deepEqual(Array.from(relaxed.warnings, item => item.field).sort(), ['answer', 'subQuestions[0].answer'])
+  const report = bankWarningReport(relaxed)
+  assert.match(report, /第 1 题「没有答案的选择题」/, '提示要能定位到具体题目')
+  assert.match(report, /第 3 题「小问一」/)
+  assert.doesNotMatch(report, /解析|没有解析|第 2 题/, '缺少解析不应产生任何提示')
+
+  const structural = inspectBank(JSON.stringify([{ type: 'single', content: '选项不足', options: { A: '只有一个' }, answer: '' }]), 'x.json', { allowMissingAnswers: true })
+  assert.ok(structural.issues.some(item => item.field === 'options'), '选项等结构性错误仍然阻断保存')
 })

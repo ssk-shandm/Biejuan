@@ -52,7 +52,7 @@
           </div>
         </header>
 
-        <div class="content-body">
+        <div class="content-body" :class="{ 'content-body-fixed': activeSection === 'runtime-terminal' }">
           <template v-if="activeSection === 'tour'">
             <section class="settings-card" data-tour="tour-entry">
               <div class="card-heading">
@@ -137,7 +137,7 @@
           </template>
 
           <template v-else-if="activeSection === 'runtime-terminal'">
-            <div data-tour="terminal-panel">
+            <div class="terminal-panel" data-tour="terminal-panel">
               <RuntimeTerminal />
             </div>
           </template>
@@ -756,6 +756,19 @@ async function openLink(url: string) {
   overflow-x: hidden;
   overflow-y: auto;
   padding: 24px 12px 28px;
+}
+
+/* 运行终端固定占满剩余空间，日志变长时在终端内部滚动，不撑高页面 */
+.content-body.content-body-fixed {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.terminal-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
 }
 
 .settings-card {

@@ -24,7 +24,7 @@
 </template>
 
 <script setup lang='ts'>
-import { nextTick, ref, watch } from 'vue'
+import { nextTick, onMounted, ref, watch } from 'vue'
 import { useRuntimeConsole, type RuntimeLogLevel } from '../composables/useRuntimeConsole'
 
 const { runtimeLogs, clearRuntimeLogs, saveRuntimeLogs } = useRuntimeConsole()
@@ -52,13 +52,23 @@ async function handleSave() {
 
 watch(runtimeLogs, async () => {
   await nextTick()
-  if (output.value) output.value.scrollTop = output.value.scrollHeight
+  const element = output.value
+  // 用户向上翻看历史日志时不再强行拉回底部，否则读不到上面的内容
+  if (element && element.scrollHeight - element.scrollTop - element.clientHeight < 48) {
+    element.scrollTop = element.scrollHeight
+  }
 }, { deep: true })
+
+// 进入页面时定位到最新一条，避免固定高度下只看到最早的历史记录
+onMounted(async () => {
+  await nextTick()
+  if (output.value) output.value.scrollTop = output.value.scrollHeight
+})
 </script>
 
 <style scoped>
-.runtime-terminal { width: 100%; height: 100%; min-height: 0; display: flex; box-sizing: border-box; flex-direction: column; overflow: hidden; color: #d8e2f0; background: #101722; border: 1px solid rgba(148, 163, 184, .24); border-radius: 12px; box-shadow: 0 8px 24px rgba(9, 16, 28, .12); font-family: Consolas, 'Courier New', monospace; }
-.terminal-bar { display: flex; align-items: center; justify-content: space-between; min-height: 42px; padding: 0 14px; border-bottom: 1px solid rgba(148, 163, 184, .24); }
+.runtime-terminal { width: 100%; min-height: 0; flex: 1 1 auto; display: flex; box-sizing: border-box; flex-direction: column; overflow: hidden; color: #d8e2f0; background: #101722; border: 1px solid rgba(148, 163, 184, .24); border-radius: 12px; box-shadow: 0 8px 24px rgba(9, 16, 28, .12); font-family: Consolas, 'Courier New', monospace; }
+.terminal-bar { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; min-height: 42px; padding: 0 14px; border-bottom: 1px solid rgba(148, 163, 184, .24); }
 .terminal-title { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 8px 0; font-size: .82rem; font-weight: 700; }
 .terminal-actions { display: flex; align-items: center; gap: 4px; }
 .terminal-clear { border: 0; color: inherit; background: transparent; font: inherit; cursor: pointer; }
@@ -70,8 +80,8 @@ watch(runtimeLogs, async () => {
 .terminal-save:hover:not(:disabled) { color: #ccfbf1; }
 .terminal-clear:disabled { cursor: not-allowed; opacity: .45; }
 .terminal-save:disabled { cursor: not-allowed; opacity: .45; }
-.terminal-export-message { margin: 0; padding: 5px 14px; color: #94a3b8; border-bottom: 1px solid rgba(148, 163, 184, .16); font-size: .7rem; }
-.terminal-output { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px 18px; border-top: 1px solid rgba(148, 163, 184, .16); background: #0b111b; font-size: .75rem; line-height: 1.55; }
+.terminal-export-message { flex: 0 0 auto; margin: 0; padding: 5px 14px; color: #94a3b8; border-bottom: 1px solid rgba(148, 163, 184, .16); font-size: .7rem; }
+.terminal-output { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 14px 16px 18px; border-top: 1px solid rgba(148, 163, 184, .16); background: #0b111b; font-size: .75rem; line-height: 1.55; }
 .terminal-line { display: grid; grid-template-columns: 82px 52px minmax(0, 1fr); gap: 9px; padding: 2px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .terminal-line time { color: #64748b; }
 .terminal-line strong { color: #93c5fd; font-size: .68rem; }

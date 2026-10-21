@@ -18,6 +18,9 @@ async function boot() {
   const { showGlobalToast } = await import('./composables/useToast')
   if (persistenceError) showGlobalToast(persistenceError, 'error', 0)
   window.addEventListener('learning-save-error', event => showGlobalToast((event as CustomEvent<string>).detail, 'error', 0))
+  // 拖拽落到页面空白处时，WebView 默认会直接打开该文件并离开应用；统一拦截，交给各页面自己的投放区处理。
+  window.addEventListener('dragover', event => event.preventDefault())
+  window.addEventListener('drop', event => event.preventDefault())
   const flush = () => { void persistLearningState().catch(() => {}) }
   flush()
   window.addEventListener('pagehide', flush)

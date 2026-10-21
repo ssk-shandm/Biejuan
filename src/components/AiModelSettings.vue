@@ -20,7 +20,6 @@
         <label class='field wide-field'>
           <span>API 基础地址</span>
           <input v-model.trim='provider.baseUrl' type='url' placeholder='https://api.example.com/v1' />
-          <small>接口地址：{{ endpointPreview }}；本地网关可填写 <code>http://127.0.0.1:端口/v1</code>（不要填写 API Key 时也可尝试）</small>
         </label>
         <div class='field'>
           <label for='provider-model'>模型</label>
@@ -126,7 +125,6 @@ const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 
 const apiKeyInputType = computed(() => showApiKey.value ? 'text' : 'password')
-const endpointPreview = computed(() => provider.baseUrl.trim() ? buildChatCompletionsEndpoint(provider.baseUrl) : '请输入 API 基础地址')
 const isDesktopConfig = computed(() => configBackend.value === 'tauri')
 
 function handleOutsideClick(event: MouseEvent) {

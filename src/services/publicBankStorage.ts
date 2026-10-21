@@ -43,7 +43,9 @@ export async function readPublicBank(file: string, name = file) {
   }
   const questions = normalizeQuestionBank(raw, name)
   if (questions.length === 0) throw new Error('题库中没有题目')
-  const report = inspectBank(text, name)
+  // 读取已有题库时允许题目暂时没有答案（AI 转换草稿），否则保存成功却打不开；
+  // 选项缺失、答案与选项不匹配等结构性问题仍然阻断。
+  const report = inspectBank(text, name, { allowMissingAnswers: true })
   if (report.issues.length) throw new Error(bankIssueReport(report))
   return questions
 }

@@ -10,6 +10,8 @@ export const PUBLIC_BANKS_CHANGED = 'public-banks-changed'
 export interface PublicBankSaveResult {
   file: string
   location: string
+  /** 不阻断保存的提示，例如题目暂时没有答案 */
+  warnings: string[]
 }
 
 function canWritePublicBank() {
@@ -27,12 +29,16 @@ async function imageToBase64(blob: Blob): Promise<string> {
 
 export async function savePublicBank(name: string, directory: string, content: string, images: Pick<DocumentImageAsset, 'fileName' | 'blob'>[], notify = true, source: BankSource = 'ai'): Promise<PublicBankSaveResult> {
   if (localStorage.getItem('exam-restore-pending')) throw new Error('正在恢复学习数据，请完成恢复后再保存题库。转换结果请先导出保管。')
-  const inspection = inspectBank(content, name)
+  // AI 转换允许题目暂时没有答案，缺答案只作为提示返回，由调用方在终端逐题说明；
+  // 人工导入（source 为 import）仍保持严格校验，缺答案直接拒绝。
+  const allowMissingAnswers = source !== 'import'
+  const inspection = inspectBank(content, name, { allowMissingAnswers })
   if (inspection.issues.length) throw new Error(bankIssueReport(inspection))
+  const warnings = inspection.warnings.map(item => `${item.question}：${item.reason}`)
   if (!canWritePublicBank()) {
     const file = await saveGeneratedBank(name, directory, content, images)
     rememberBankSource(file, source)
-    return { file, location: '应用内存储（此运行环境无法写入本地 public 目录）' }
+    return { file, location: '应用内存储（此运行环境无法写入本地 public 目录）', warnings }
   }
   const payload = {
     name, directory, content,
@@ -51,7 +57,7 @@ export async function savePublicBank(name: string, directory: string, content: s
   }
   rememberBankSource(result.file, source)
   if (notify) window.dispatchEvent(new CustomEvent<string>(PUBLIC_BANKS_CHANGED, { detail: result.file }))
-  return result
+  return { ...result, warnings }
 }
 
 let migration: Promise<string[]> | null = null

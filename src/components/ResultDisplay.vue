@@ -9,7 +9,9 @@
 
     <section class="result-section answer-block" :aria-label="isShortAnswer ? '参考回答' : '参考答案'">
       <div class="result-section-title">{{ isShortAnswer ? '参考回答' : '参考答案' }}</div>
+      <p v-if="!hasAnswer" class="answer-missing">此题原文未提供答案，可在题库中补充后再练习。</p>
       <MarkdownContent
+        v-else
         class="markdown-answer-content"
         :content="correctAnswer"
         :format="answerFormat"
@@ -49,6 +51,8 @@ const props = withDefaults(defineProps<{
 
 const isShortAnswer = computed(() => props.questionType === '简答题' || props.questionType === '简答')
 
+const hasAnswer = computed(() => Boolean(props.correctAnswer?.trim()) || Boolean(props.answerDetail?.accepts?.length))
+
 const acceptedAlternatives = computed(() => {
   if (!props.answerDetail?.accepts?.length) return []
   const correctNormalized = props.correctAnswer.trim().toLowerCase()
@@ -57,11 +61,13 @@ const acceptedAlternatives = computed(() => {
 
 const resultTextClass = computed(() => {
   if (isShortAnswer.value) return 'neutral'
+  if (!hasAnswer.value) return 'neutral'
   return props.isCorrect ? 'correct' : 'incorrect'
 })
 
 const resultText = computed(() => {
   if (isShortAnswer.value) return '本题为开放式作答，参考回答见下方。'
+  if (!hasAnswer.value) return '本题原文未提供答案，暂不判分。'
   if (props.isCorrect) return '回答正确！'
   return '回答错误。正确答案见下方。'
 })
@@ -146,6 +152,11 @@ const resultText = computed(() => {
   border-radius: 8px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+.answer-missing {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.88rem;
 }
 .markdown-answer-content :deep(pre) {
   margin: 10px 0;
