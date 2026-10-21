@@ -12,14 +12,14 @@
       </div>
     </header>
 
-    <div class="mobile-settings-section-title"><span>学习与创作</span><small>01 / TOOLS</small></div>
+    <div class="mobile-settings-section-title" data-tour="settings-nav"><span>学习与创作</span><small>01 / TOOLS</small></div>
     <div class="mobile-settings-tile-group">
-      <button class="mobile-settings-tile" type="button" @click="$emit('converter')">
+      <button class="mobile-settings-tile" type="button" data-tour="converter-entry" @click="$emit('converter')">
         <span class="mobile-settings-tile-icon tone-blue" aria-hidden="true">✦</span>
         <span class="mobile-settings-tile-copy"><strong>文档转换</strong><small>提取资料，转换为可练习的题库</small></span>
         <span class="mobile-settings-chevron" aria-hidden="true">›</span>
       </button>
-      <button class="mobile-settings-tile" type="button" :aria-expanded="showAiSettings" aria-controls="mobile-ai-settings" @click="showAiSettings = !showAiSettings">
+      <button class="mobile-settings-tile" type="button" data-tour="ai-model-entry" :aria-expanded="showAiSettings" aria-controls="mobile-ai-settings" @click="showAiSettings = !showAiSettings">
         <span class="mobile-settings-tile-icon tone-violet" aria-hidden="true">◎</span>
         <span class="mobile-settings-tile-copy"><strong>AI 模型配置 <span class="mobile-settings-tag" :class="{ ready: modelReady }">{{ modelReady ? '已配置' : '待配置' }}</span></strong><small>{{ modelReady ? provider.model : '连接模型服务，开启智能转换' }}</small></span>
         <span class="mobile-settings-chevron" :class="{ expanded: showAiSettings }" aria-hidden="true">›</span>

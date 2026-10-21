@@ -13,7 +13,17 @@
     @refresh-banks="emit('refreshBanks')"
   />
 
-  <SettingsPage v-else-if="appMode === 'settings'" key="settings" :banks="allBanks" :selected-bank="currentBankFile" :is-refreshing-banks="isRefreshingBanks" @back="emit('backHome')" @refresh-banks="emit('refreshBanks')" />
+  <SettingsPage
+    v-else-if="appMode === 'settings'"
+    key="settings"
+    :banks="allBanks"
+    :selected-bank="currentBankFile"
+    :is-refreshing-banks="isRefreshingBanks"
+    :initial-section="settingsSection"
+    @back="emit('backHome')"
+    @refresh-banks="emit('refreshBanks')"
+    @start-tour="emit('startTour')"
+  />
 
   <AboutPage v-else-if="appMode === 'about'" key="about" @back="emit('backSettings')" />
 
@@ -105,6 +115,8 @@ defineProps<{
   wrongDisplayEntryIds: number[]
   shuffleEnabled: boolean
   activeNotebookName?: string
+  /** 教程需要定位到的设置分区 */
+  settingsSection?: string
 }>()
 
 const quizModes: AppMode[] = ['practice', 'exam', 'endorse', 'wrong', 'specialize']
@@ -135,5 +147,6 @@ const emit = defineEmits<{
   (event: 'subSubmit', question: Question, subId: number, answer: string): void
   (event: 'subAnswerUpdate', question: Question, subId: number, answer: string): void
   (event: 'submitExam'): void
+  (event: 'startTour'): void
 }>()
 </script>

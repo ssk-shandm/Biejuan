@@ -2,6 +2,7 @@ import { renderPromptMessages, type LlmPromptConfig, type LoadedLlmFramework } f
 import type { ContentFormat } from '../types'
 import { inheritedContentFormat, normalizeContentFormat } from '../utils/contentFormat'
 import { LlmTruncatedError, type ChatMessage, type LlmClient, type LlmLogger } from './llmClient'
+import { extractDocSignature, signatureToDescription, type DocSignature } from '../utils/examStructure'
 
 /**
  * AI 驱动的题库转换流水线（与 UI 无关，可在浏览器和 Node 中运行）：
@@ -52,8 +53,20 @@ export type ConvertStats = {
 export type ConvertResult = { bankName: string; questions: QuestionRecord[]; stats: ConvertStats }
 
 type SourceLine = { number: number; text: string }
-type SectionRole = 'questions' | 'answers' | 'ignore'
-type Section = { startLine: number; endLine: number; role: SectionRole; title: string; hint: string }
+type SectionRole = 'questions' | 'answers' | 'materials' | 'mixed-content' | 'ignore'
+type Section = {
+  startLine: number
+  endLine: number
+  role: SectionRole
+  title: string
+  hint: string
+  /** analyze 为该区段推断的题型，仅作提示传给 convert */
+  questionType?: string
+  /** analyze 推断的答案格式，仅作提示传给 answer-match */
+  answerFormat?: string
+  /** 题目依赖的材料所在行范围（如阅读文章） */
+  materialsRange?: string
+}
 type Chunk = { label: string; lines: SourceLine[]; continuation: SourceLine[]; sections: Section[] }
 type Draft = {
   record: QuestionRecord
@@ -359,6 +372,25 @@ export async function convertDocumentToQuestionBank(options: ConvertOptions): Pr
 
   const lines = toSourceLines(options.sourceText)
   if (!lines.length) throw new Error('文档中没有可转换的文本')
+
+  // ── 文档特征提取（不做格式假设，只统计特征供 AI 参考） ──
+  let docSignature: DocSignature = {
+    totalLines: lines.length, charCount: 0, structuralHeaders: [],
+    numberingStyle: 'none', questionNumberSamples: [], optionMarkSamples: [],
+    answerMarkerSamples: [], restatedQuestionLineCount: 0,
+    estimatedAnswerStartLine: 0, hasQuestionRestatements: false, analysisMarkerSamples: [],
+  }
+  try {
+    docSignature = extractDocSignature(lines)
+    log('command', `signature --lines ${docSignature.totalLines} --numbering ${docSignature.numberingStyle} --answer-markers ${docSignature.answerMarkerSamples.length} --restatements ${docSignature.restatedQuestionLineCount}`)
+    if (docSignature.estimatedAnswerStartLine) {
+      log('info', `特征提示：可能在 ${docSignature.estimatedAnswerStartLine} 行附近开始有答案区（由 AI 最终确认）`)
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    log('warning', `文档特征提取失败，将由 AI 全权判断结构：${reason}`)
+  }
+
   const lineByNumber = new Map(lines.map((line) => [line.number, line]))
   const imageLines = new Map<string, number>()
   for (const line of lines) for (const match of line.text.matchAll(IMAGE_ANCHOR)) imageLines.set(match[1]!, line.number)
@@ -406,7 +438,14 @@ export async function convertDocumentToQuestionBank(options: ConvertOptions): Pr
       if (signal?.aborted) throw error
       const range = `${chunk.lines[0]!.number}-${chunk.lines.at(-1)!.number}`
       stats.failedRanges.push(range)
-      log('error', `[${chunk.label}] 转换失败，第 ${range} 行的题目将缺失：${error instanceof Error ? error.message : String(error)}`)
+      // 列出该分段实际包含的疑似题号，便于用户判断丢了哪些题
+      const previewNumbers = chunk.lines
+        .filter((line) => QUESTION_START.test(line.text))
+        .slice(0, 8)
+        .map((line) => line.text.trim().slice(0, 24))
+      const numberHint = previewNumbers.length ? `，该段疑似包含：${previewNumbers.join(' | ')}` : ''
+      log('error', `[${chunk.label}] 转换失败，第 ${range} 行的题目将缺失${numberHint}`)
+      log('error', `[${chunk.label}] 失败原因：${error instanceof Error ? error.message : String(error)}`)
       return [] as Draft[]
     }
   })
@@ -439,9 +478,13 @@ export async function convertDocumentToQuestionBank(options: ConvertOptions): Pr
   // ── 以下为流水线各步骤 ──
 
   async function analyzeStructure(): Promise<{ title: string; sections: Section[] }> {
-    const fallback = { title: '', sections: [{ startLine: 1, endLine: lines.length, role: 'questions' as const, title: '', hint: '' }] }
+    const fallback = {
+      title: '',
+      sections: [{ startLine: 1, endLine: lines.length, role: 'questions' as const, title: '', hint: '' }],
+    }
     const prompt = prompts.analyze
     if (!prompt) return fallback
+
     const maxCharacters = settings.analysis?.maxCharacters ?? 120000
     const maxLineCharacters = settings.analysis?.maxLineCharacters ?? 80
     const windows: SourceLine[][] = []
@@ -459,6 +502,8 @@ export async function convertDocumentToQuestionBank(options: ConvertOptions): Pr
     }
     if (current.length) windows.push(current)
 
+    // 特征摘要随每个窗口一起发给模型，帮助它少走弯路
+    const signatureText = signatureToDescription(docSignature)
     log('command', `analyze --lines ${lines.length} --windows ${windows.length}`)
     try {
       const results = await mapWithConcurrency(windows, concurrency, async (window, index) => {
@@ -467,8 +512,11 @@ export async function convertDocumentToQuestionBank(options: ConvertOptions): Pr
         const content = await chat(prompt, {
           sourceName: options.sourceName,
           lineCount: String(lines.length),
-          windowInfo: windows.length > 1 ? `第 ${first}-${last} 行（全文分 ${windows.length} 次分析，这是第 ${index + 1} 次）` : `完整文档，第 ${first}-${last} 行`,
+          windowInfo: windows.length > 1
+            ? `第 ${first}-${last} 行（全文分 ${windows.length} 次分析，这是第 ${index + 1} 次）`
+            : `完整文档，第 ${first}-${last} 行`,
           outline: numbered(window, maxLineCharacters),
+          docSignature: signatureText,
         }, windows.length > 1 ? `结构分析 ${index + 1}/${windows.length}` : '结构分析')
         const parsed = parseJsonLoose(content)
         const title = isRecord(parsed) ? text(parsed.title) : ''
@@ -486,18 +534,26 @@ export async function convertDocumentToQuestionBank(options: ConvertOptions): Pr
 
   function sanitizeSections(raw: unknown[], first: number, last: number): Section[] {
     const parsed = raw.filter(isRecord).map((item) => {
-      const role = text(item.role).toLowerCase()
+      const roleText = text(item.role).toLowerCase()
+      const role: SectionRole = roleText === 'answers' ? 'answers'
+        : roleText === 'ignore' ? 'ignore'
+          : roleText === 'materials' ? 'materials'
+            : roleText === 'mixed-content' ? 'mixed-content'
+              : 'questions'
       return {
         startLine: Math.max(first, Math.floor(Number(item.startLine))),
         endLine: Math.min(last, Math.floor(Number(item.endLine))),
-        role: (role === 'answers' || role === 'ignore' ? role : 'questions') as SectionRole,
+        role,
         title: text(item.title).slice(0, 60),
-        hint: text(item.hint).slice(0, 300),
+        hint: text(item.hint).slice(0, 600),
+        questionType: text(item.questionType).slice(0, 40) || undefined,
+        answerFormat: text(item.answerFormat).slice(0, 40) || undefined,
+        materialsRange: text(item.materialsLineRange).slice(0, 40) || undefined,
       }
     }).filter((section) => Number.isFinite(section.startLine) && Number.isFinite(section.endLine) && section.endLine >= section.startLine)
       .sort((a, b) => a.startLine - b.startLine)
 
-    // 去重叠，并把模型漏掉的行补成题目区（宁可多转换，不漏题）
+    // 去重叠；模型漏掉的行补成题目区，材料区与题目区不强行改判（宁可多转换，不漏题）
     const result: Section[] = []
     let cursor = first
     for (const section of parsed) {
@@ -512,13 +568,20 @@ export async function convertDocumentToQuestionBank(options: ConvertOptions): Pr
   }
 
   function buildChunks(limit: number): Chunk[] {
-    const questionLines = lines.filter((line) => sectionOf(line.number)?.role === 'questions')
+    // 只有 answers / ignore 区段不参与题目转换。
+    // materials（阅读材料）与 mixed-content（题文混排）必须保留：
+    //   - materials 是题目依赖的原文，模型需要它才能理解题干所指
+    //   - mixed-content 本身就是题目所在区段，丢弃会导致整段漏题
+    const contentLines = lines.filter((line) => {
+      const role = sectionOf(line.number)?.role
+      return role !== 'answers' && role !== 'ignore'
+    })
     const sectionSize = new Map(sections.map((section) => [section, charCount(lines.slice(section.startLine - 1, section.endLine))]))
     const groups: SourceLine[][] = []
     let current: SourceLine[] = []
     let size = 0
     let currentSection: Section | undefined
-    for (const line of questionLines) {
+    for (const line of contentLines) {
       const cost = line.text.length + String(line.number).length + 3
       const section = sectionOf(line.number)
       // 新区段放不进当前分段的剩余空间时，从区段开头另起一段，避免大题（综合题、成套 SQL 题）被切开
@@ -574,11 +637,18 @@ export async function convertDocumentToQuestionBank(options: ConvertOptions): Pr
     const sectionHint = chunk.sections.length > 1
       ? chunk.sections.map((section) => `第 ${section.startLine} 行起「${section.title || '未命名'}」：${section.hint || '无'}`).join('；')
       : chunk.sections[0]?.hint ?? ''
+    // 把 analyze 推断出的区段特征原样传给转换器，让它按该区段的实际情况处理
+    const sectionQuestionType = chunk.sections.map((section) => section.questionType).filter(Boolean).join(' / ')
+    const sectionAnswerFormat = chunk.sections.map((section) => section.answerFormat).filter(Boolean).join(' / ')
+    const sectionMaterialsRange = chunk.sections.map((section) => section.materialsRange).filter(Boolean).join(' / ')
     const variables = {
       bankName: options.bankName?.trim() || analysis.title || options.sourceName,
       sourceName: options.sourceName,
       sectionTitle,
       sectionHint,
+      sectionQuestionType,
+      sectionAnswerFormat,
+      sectionMaterialsRange,
       coreRange: `第 ${first} 行至第 ${last} 行`,
       imageManifestJson: JSON.stringify(chunkImages.map((id) => ({ id, line: imageLines.get(id) }))),
       sourceText: numbered(chunk.lines),
@@ -665,7 +735,14 @@ export async function convertDocumentToQuestionBank(options: ConvertOptions): Pr
     }
     if (pending.length) {
       stats.dropped += pending.length
-      log('warning', `[${label}] ${pending.length} 道题修复后仍未通过校验，已丢弃：${pending[0]!.errors.replace(/\n/g, '；').slice(0, 200)}`)
+      // 逐条输出失败原因，避免只看到第一条而无法定位其余题目
+      for (const item of pending) {
+        const preview = text((item.raw as Record<string, unknown> | undefined)?.content
+          ?? (item.raw as Record<string, unknown> | undefined)?.question
+          ?? '').replace(/\s+/g, ' ').slice(0, 80)
+        log('warning', `[${label}] 已丢弃题目${preview ? `「${preview}」` : ''}：${item.errors.replace(/\n/g, '；').slice(0, 300)}`)
+      }
+      log('warning', `[${label}] 共 ${pending.length} 道题修复 ${maxAttempts} 次后仍未通过校验，已丢弃（逐条原因见上）`)
     }
     return fixed
   }
@@ -692,12 +769,13 @@ export async function convertDocumentToQuestionBank(options: ConvertOptions): Pr
 
   function attachOrphanImages(drafts: Draft[]) {
     const claimed = new Set(drafts.flatMap((draft) => (Array.isArray(draft.record.images) ? draft.record.images.map(String) : [])))
-    let unassigned = 0
+    const unassigned: Array<{ id: string; line: number }> = []
     for (const [id, lineNumber] of imageLines) {
       if (claimed.has(id)) continue
       const owner = drafts.find((draft) => lineNumber >= draft.startLine && lineNumber <= draft.endLine)
       if (!owner) {
-        if (sectionOf(lineNumber)?.role === 'questions') unassigned += 1
+        const role = sectionOf(lineNumber)?.role
+        if (role !== 'answers' && role !== 'ignore') unassigned.push({ id, line: lineNumber })
         continue
       }
       const images = Array.isArray(owner.record.images) ? owner.record.images.map(String) : []
@@ -706,25 +784,30 @@ export async function convertDocumentToQuestionBank(options: ConvertOptions): Pr
       stats.imagesAttached += 1
     }
     if (stats.imagesAttached) log('info', `按图片锚点所在行补挂图片 ${stats.imagesAttached} 张`)
-    if (unassigned) log('warning', `题目区有 ${unassigned} 张图片不在任何题目的行范围内，未关联到题目`)
+    if (unassigned.length) {
+      // 输出具体图片 id 和所在行，便于用户定位是哪张图没挂上
+      const detail = unassigned.slice(0, 10).map(item => `${item.id}（第 ${item.line} 行）`).join('、')
+      const more = unassigned.length > 10 ? ` 等 ${unassigned.length} 张` : ''
+      log('warning', `以下图片不在任何题目的行范围内，未关联到题目：${detail}${more}。可检查该行附近是否为题目区，或手动在题库中补充 images 字段。`)
+    }
   }
 
   async function matchAnswerSections(drafts: Draft[]) {
     const answerSections = sections.filter((section) => section.role === 'answers')
     const prompt = prompts['answer-match']
     if (!answerSections.length || !prompt) return
-    // 待匹配目标：没有答案的普通题目，以及综合题里没有答案的小问（key 形如“12.3”）
+    // Answers and explanations are independent: an inline answer must not suppress a separate explanation.
     type Target = { draft: Draft; key: string; subId?: number; type: string; preview: string; parent?: string; options: Record<string, string> }
     const pending: Target[] = []
     drafts.forEach((draft, index) => {
       const record = draft.record
       const preview = text(record.content).replace(/\s+/g, ' ').slice(0, 60)
       if (record.type !== 'compound') {
-        if (isEmptyAnswer(record.answer)) pending.push({ draft, key: String(index + 1), type: String(record.type), preview, options: isRecord(record.options) ? record.options as Record<string, string> : {} })
+        if (isEmptyAnswer(record.answer) || !text(record.explanation)) pending.push({ draft, key: String(index + 1), type: String(record.type), preview, options: isRecord(record.options) ? record.options as Record<string, string> : {} })
         return
       }
       for (const sub of Array.isArray(record.subQuestions) ? record.subQuestions.filter(isRecord) : []) {
-        if (!isEmptyAnswer(sub.answer)) continue
+        if (!isEmptyAnswer(sub.answer) && text(record.explanation)) continue
         pending.push({
           draft, key: `${index + 1}.${sub.id}`, subId: Number(sub.id), type: String(sub.type), parent: preview,
           preview: text(sub.content).replace(/\s+/g, ' ').slice(0, 60),
@@ -733,19 +816,22 @@ export async function convertDocumentToQuestionBank(options: ConvertOptions): Pr
       }
     })
     if (!pending.length) {
-      log('info', '所有题目已带答案，跳过答案区匹配')
+      log('info', '题目答案与解析均已提供，跳过答案区匹配')
       return
     }
     const answerText = answerSections.map((section) => numbered(lines.slice(section.startLine - 1, section.endLine))).join('\n')
     const answerHint = answerSections.map((section) => `第 ${section.startLine}-${section.endLine} 行「${section.title}」${section.hint ? `：${section.hint}` : ''}`).join('；')
+    // 把特征提取阶段观察到的答案标记样式传给模型，帮助它少走弯路（模型仍可自行判断）
+    const answerMarkerSamples = docSignature.answerMarkerSamples.join('；') || '（未检测到固定标记，请在原文中自行识别）'
     const batchSize = Math.max(10, settings.answerMatching?.batchSize ?? 80)
     const batches: Array<typeof pending> = []
     for (let index = 0; index < pending.length; index += batchSize) batches.push(pending.slice(index, index + batchSize))
     log('command', `answer-match --questions ${pending.length} --batches ${batches.length}`)
 
-    const byKey = new Map(pending.map((item) => [item.key, item]))
+    let explanationsMatched = 0
     await mapWithConcurrency(batches, concurrency, async (batch, index) => {
       const label = batches.length > 1 ? `答案匹配 ${index + 1}/${batches.length}` : '答案匹配'
+      const byKey = new Map(batch.map((item) => [item.key, item]))
       const questionsJson = JSON.stringify(batch.map((target) => ({
         key: target.key,
         section: target.draft.section,
@@ -753,26 +839,33 @@ export async function convertDocumentToQuestionBank(options: ConvertOptions): Pr
         type: target.type,
         ...(target.parent ? { parent: target.parent } : {}),
         preview: target.preview,
+        existingAnswer: target.subId === undefined ? target.draft.record.answer
+          : (target.draft.record.subQuestions as QuestionRecord[]).find(sub => sub.id === target.subId)?.answer,
+        needsExplanation: !text(target.draft.record.explanation),
         ...(Object.keys(target.options).length ? { optionKeys: Object.keys(target.options).join('') } : {}),
       })))
       try {
-        const content = await chat(prompt, { answerText, answerHint, questionsJson }, label)
+        const content = await chat(prompt, { answerText, answerHint, answerMarkerSamples, questionsJson }, label)
         for (const item of pickArray(parseJsonLoose(content), ['answers', 'items'])) {
           if (!isRecord(item)) continue
           const target = byKey.get(text(item.key))
           if (!target) continue
           const { draft } = target
           const record = draft.record
-          const answer = answerFor(target.type, item.answer, target.options)
-          if (isEmptyAnswer(answer)) continue
+          const existingAnswer = target.subId === undefined ? record.answer
+            : (record.subQuestions as QuestionRecord[]).find(sub => sub.id === target.subId)?.answer
+          const needsAnswer = isEmptyAnswer(existingAnswer)
+          const answer = needsAnswer ? answerFor(target.type, item.answer, target.options) : existingAnswer
           const explanation = text(item.explanation)
+          if (isEmptyAnswer(answer) && !explanation) continue
+          if (!needsAnswer && !explanation) continue
           let next: QuestionRecord
           if (target.subId === undefined) {
             next = {
               ...record,
               answer,
-              answerFormat: resolveFieldFormat(item.answerFormat, answer,
-                normalizeContentFormat(record.answerFormat, inheritedContentFormat(normalizeContentFormat(record.format)))),
+              answerFormat: needsAnswer ? resolveFieldFormat(item.answerFormat, answer,
+                normalizeContentFormat(record.answerFormat, inheritedContentFormat(normalizeContentFormat(record.format)))) : record.answerFormat,
             }
             if (explanation && !text(record.explanation)) {
               next.explanation = explanation
@@ -785,8 +878,8 @@ export async function convertDocumentToQuestionBank(options: ConvertOptions): Pr
               ? {
                 ...sub,
                 answer,
-                answerFormat: resolveFieldFormat(item.answerFormat, answer,
-                  normalizeContentFormat(sub.answerFormat, inheritedContentFormat(normalizeContentFormat(sub.format)))),
+                answerFormat: needsAnswer ? resolveFieldFormat(item.answerFormat, answer,
+                  normalizeContentFormat(sub.answerFormat, inheritedContentFormat(normalizeContentFormat(sub.format)))) : sub.answerFormat,
               }
               : sub)
             next = { ...record, subQuestions }
@@ -803,14 +896,16 @@ export async function convertDocumentToQuestionBank(options: ConvertOptions): Pr
           }
           if ((await validateRecord(next)).valid) {
             draft.record = next
-            stats.answersMatched += 1
+            if (needsAnswer && !isEmptyAnswer(answer)) stats.answersMatched += 1
+            if (text(next.explanation) !== text(record.explanation)) explanationsMatched += 1
           }
         }
       } catch (error) {
         if (signal?.aborted) throw error
-        log('warning', `[${label}] 答案匹配失败，这批题目保持无答案：${error instanceof Error ? error.message : String(error)}`)
+        log('warning', `[${label}] 答案或解析补全失败，这批题目保留原内容：${error instanceof Error ? error.message : String(error)}`)
       }
     })
     log('success', `答案区匹配完成：${stats.answersMatched}/${pending.length} 道题补全答案`)
+    if (explanationsMatched) log('success', `独立解析补全 ${explanationsMatched} 项`)
   }
 }

@@ -17,12 +17,13 @@
           </div>
         </div>
 
-        <nav class="settings-nav" aria-label="设置分类">
+        <nav class="settings-nav" aria-label="设置分类" data-tour="settings-nav">
           <button
             v-for="item in settingsSections"
             :key="item.id"
             type="button"
             class="settings-nav-item"
+            :data-tour="`settings-nav-${item.id}`"
             :class="{ active: activeSection === item.id }"
             :aria-current="activeSection === item.id ? 'page' : undefined"
             @click="activeSection = item.id"
@@ -52,6 +53,23 @@
         </header>
 
         <div class="content-body">
+          <template v-if="activeSection === 'tour'">
+            <section class="settings-card" data-tour="tour-entry">
+              <div class="card-heading">
+                <div>
+                  <span class="section-label">上手引导</span>
+                  <h3>新手教程</h3>
+                  <p class="card-description">
+                    认识题库选择、学习模式和文档转换。指引会标出对应位置，你可以逐步查看，也可以随时跳过。
+                    需要时可以回到这里重看。
+                  </p>
+                </div>
+              </div>
+              <div class="tour-entry-actions">
+                <button class="tour-start-btn" type="button" @click="emit('startTour')">开始教程</button>
+              </div>
+            </section>
+          </template>
           <div v-if="converterVisited" v-show="activeSection === 'ai-convert'">
             <AiDocumentConverter @configure="activeSection = 'ai-model'" @started="activeSection = 'runtime-terminal'" />
           </div>
@@ -67,7 +85,7 @@
                 </div>
               </div>
 
-              <div class="resource-actions">
+              <div class="resource-actions" data-tour="resource-actions">
                 <button
                   class="resource-btn"
                   type="button"
@@ -113,11 +131,15 @@
           </template>
 
           <template v-else-if="activeSection === 'ai-model'">
-            <AiModelSettings />
+            <div>
+              <AiModelSettings />
+            </div>
           </template>
 
           <template v-else-if="activeSection === 'runtime-terminal'">
-            <RuntimeTerminal />
+            <div data-tour="terminal-panel">
+              <RuntimeTerminal />
+            </div>
           </template>
           <template v-else-if="activeSection === 'diagram'">
             <section class="settings-card">
@@ -159,7 +181,7 @@
           </template>
 
           <template v-else-if="activeSection === 'preferences'">
-            <section class="settings-card preferences-card">
+            <section class="settings-card preferences-card" data-tour="preferences-panel">
               <div class="card-heading">
                 <div>
                   <span class="section-label">应用偏好</span>
@@ -309,13 +331,21 @@ import {
 import { openExternalUrl } from '../utils/openExternal'
 import { openContentLocation, type ContentLocation } from '../utils/openContentLocation'
 
-defineProps<{ banks: BankEntry[]; selectedBank: string; isRefreshingBanks?: boolean }>()
+const props = defineProps<{ banks: BankEntry[]; selectedBank: string; isRefreshingBanks?: boolean; initialSection?: string }>()
 const emit = defineEmits<{
   back: []
   refreshBanks: []
+  startTour: []
 }>()
 
 const settingsSections = [
+  {
+    id: 'tour',
+    icon: '★',
+    label: '新手教程',
+    description: '重新看一遍引导',
+    summary: '高亮讲解做题模式、AI 配置和运行终端的用途，随时可以重看。',
+  },
   {
     id: 'preferences',
     icon: '⚙',
@@ -369,8 +399,18 @@ const settingsSections = [
 
 type SettingsSection = (typeof settingsSections)[number]['id']
 
-const activeSection = ref<SettingsSection>('about')
-const converterVisited = ref(false)
+const SECTION_IDS = settingsSections.map(item => item.id) as SettingsSection[]
+function resolveSection(value?: string): SettingsSection | undefined {
+  return value && (SECTION_IDS as string[]).includes(value) ? (value as SettingsSection) : undefined
+}
+
+const activeSection = ref<SettingsSection>(resolveSection(props.initialSection) ?? 'about')
+// 外部切换分区（教程引导需要定位到某个设置页）
+watch(() => props.initialSection, value => {
+  const target = resolveSection(value)
+  if (target && target !== activeSection.value) activeSection.value = target
+})
+const converterVisited = ref(activeSection.value === 'ai-convert')
 watch(activeSection, section => { if (section === 'ai-convert') converterVisited.value = true })
 const activeSectionMeta = computed(
   () => settingsSections.find((item) => item.id === activeSection.value) ?? settingsSections[0],
@@ -724,6 +764,10 @@ async function openLink(url: string) {
   border-radius: 12px;
   background: var(--color-bg-surface);
 }
+
+.tour-entry-actions { margin-top: 18px; }
+.tour-start-btn { border: 1px solid var(--color-accent); border-radius: 8px; padding: 10px 18px; color: #fff; background: var(--color-accent); font: inherit; font-size: .88rem; font-weight: 600; cursor: pointer; }
+.tour-start-btn:hover { filter: brightness(1.06); }
 
 .update-card {
   margin-bottom: 16px;

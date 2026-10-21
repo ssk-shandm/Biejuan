@@ -1,10 +1,10 @@
 [package]
 name = "aaa"
-version = "0.2.0"
+version = "0.2.1"
 description = "别卷 - A quiz practice application"
 authors = ["ssk-shandm"]
 license = "MIT"
-repository = "https://github.com/ssk-shandm/exam"
+repository = "https://github.com/ssk-shandm/Biejuan"
 edition = "2021"
 
 [lib]

@@ -1,6 +1,7 @@
 ﻿<template>
   <section class="bank-manager" aria-label="当前题库">
     <BankImportPanel />
+    <div data-tour="bank-manage">
     <div class="bank-manager-heading">
       <div>
         <h4>当前题库（{{ banks.length }}）</h4>
@@ -22,6 +23,7 @@
       </button>
     </div>
     <p v-if="message" class="bank-manager-status" :class="{ error: failed }" role="status">{{ message }}</p>
+    </div>
   </section>
 </template>
 

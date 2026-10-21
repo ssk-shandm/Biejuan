@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { saveExportBlob } from '../services/fileService'
 
 export type RuntimeLogLevel = 'info' | 'warn' | 'error'
 
@@ -7,6 +8,14 @@ export interface RuntimeLogEntry {
   level: RuntimeLogLevel
   message: string
   timestamp: string
+}
+
+/** Stable, self-contained format used when sharing a runtime log report. */
+export interface RuntimeLogPackage {
+  format: 'biejuan-runtime-logs'
+  schemaVersion: 1
+  exportedAt: string
+  logs: RuntimeLogEntry[]
 }
 
 const MAX_RUNTIME_LOGS = 300
@@ -23,7 +32,7 @@ function redactText(value: string): string {
 }
 
 function stringifyValue(value: unknown): string {
-  if (value instanceof Error) return value.stack || value.message
+  if (value instanceof Error) return redactText(value.stack || value.message)
   if (typeof value === 'string') return redactText(value)
   if (typeof value === 'undefined') return 'undefined'
   if (typeof value === 'function') return `[Function ${value.name || 'anonymous'}]`
@@ -37,6 +46,41 @@ function stringifyValue(value: unknown): string {
   } catch {
     return '[无法序列化的运行信息]'
   }
+}
+
+export function createRuntimeLogPackage(logs: RuntimeLogEntry[] = runtimeLogs.value): RuntimeLogPackage {
+  return {
+    format: 'biejuan-runtime-logs',
+    schemaVersion: 1,
+    exportedAt: new Date().toISOString(),
+    // Copy entries so a download cannot be affected by subsequent console output.
+    logs: logs.map(entry => ({ ...entry })),
+  }
+}
+
+/** Save a redacted log snapshot through the platform-neutral export path. */
+export async function saveRuntimeLogs(logs: RuntimeLogEntry[] = runtimeLogs.value): Promise<boolean> {
+  if (logs.length === 0) return false
+  const report = createRuntimeLogPackage(logs)
+  const stamp = report.exportedAt.replace(/[:.]/g, '-')
+  const text = report.logs
+    .map(entry => `${entry.timestamp} [${entry.level.toUpperCase()}] ${entry.message}`)
+    .join('\n')
+  const { default: JSZip } = await import('jszip')
+  const zip = new JSZip()
+  zip.file('runtime-logs.json', JSON.stringify(report, null, 2))
+  zip.file('runtime-logs.txt', text ? `${text}\n` : '')
+  zip.file('README.txt', [
+    'Biejuan runtime log package',
+    `Exported at: ${report.exportedAt}`,
+    `Entries: ${report.logs.length}`,
+    '',
+    'runtime-logs.json contains structured entries.',
+    'runtime-logs.txt is a plain-text rendering for quick review.',
+    'Secrets are redacted before entries are collected.',
+  ].join('\n'))
+  const blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/zip' })
+  return saveExportBlob(`runtime-logs-${stamp}.zip`, blob)
 }
 
 function formatArguments(values: unknown[]): string {
@@ -101,6 +145,7 @@ export function useRuntimeConsole() {
   return {
     runtimeLogs,
     addRuntimeLog,
+    saveRuntimeLogs,
     clearRuntimeLogs: () => { runtimeLogs.value = [] },
   }
 }

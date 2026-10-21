@@ -109,6 +109,19 @@ export interface Question {
 
 export type UserAnswer = string | string[] | null
 
+/** 新手教程的一步。target 对应界面元素的 data-tour 锚点，省略则显示居中说明。 */
+export interface TourStep {
+  key: string
+  target?: string
+  title: string
+  description: string
+  points?: string[]
+  /** 展示该步之前先把界面切到目标所在位置 */
+  prepare?: () => void | Promise<void>
+  /** 该步只在指定布局下出现；桌面端与移动端的设置界面结构不同 */
+  onlyOn?: 'desktop' | 'mobile'
+}
+
 export type AppMode = 'start' | 'practice' | 'endorse' | 'exam' | 'review' | 'wrong' | 'wrong-manage' | 'specialize' | 'settings' | 'about'
 
 /** 错题本中的一条记录（允许重复，按添加时间排序）。 */

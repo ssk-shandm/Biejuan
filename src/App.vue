@@ -47,8 +47,13 @@
       @sub-submit="handleSubSubmit"
       @sub-answer-update="handleSubAnswerUpdate"
       @submit-exam="submitExam"
+      @start-tour="startTour"
+      :settings-section="tourSettingsSection"
     />
   </Transition>
+
+  <!-- 新手教程：聚光灯高亮讲解 -->
+  <NewcomerTour :active="tourActive" :steps="tourSteps" :layout="tourLayout" @finish="finishTour" />
 
   <template v-if="appMode === 'start' || appMode === 'wrong-manage'">
     <input ref="fileInput" type="file" accept=".json" style="display:none" @change="handleFileImport" />
@@ -80,6 +85,7 @@
 <script setup lang="ts">
 import { onErrorCaptured, onMounted, ref, computed } from 'vue'
 import AppScreenHost from './components/shared/AppScreenHost.vue'
+import NewcomerTour from './components/NewcomerTour.vue'
 import ToastContainer from './components/ToastContainer.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
 import LoadingView from './components/shared/LoadingView.vue'
@@ -88,6 +94,10 @@ import { useQuizStore } from './stores/quizStore'
 import { useWrongNotebookActions } from './composables/useWrongNotebookActions'
 import { useVersion } from './composables/useVersion'
 import { useUpdatePreferences } from './composables/useUpdatePreferences'
+import { useTourState } from './composables/useTourState'
+import { buildTourSteps } from './composables/useNewcomerTour'
+import { usePlatform } from './composables/usePlatform'
+import { DEFAULT_LLM_BASE_URL, useLlmSettings } from './composables/useLlmSettings'
 
 const { checkUpdate } = useVersion()
 const { autoCheckUpdates } = useUpdatePreferences()
@@ -96,6 +106,26 @@ onMounted(() => {
     void checkUpdate()
   }
 })
+
+// ── 新手教程 ──
+const { tourDone, markTourDone } = useTourState()
+const { isDesktopTauri } = usePlatform()
+const { provider: llmProvider, loadLlmProviderSettings } = useLlmSettings()
+const tourActive = ref(false)
+const tourSettingsSection = ref<string | undefined>(undefined)
+
+const modelReady = computed(() => Boolean(
+  llmProvider.baseUrl.trim()
+  && llmProvider.baseUrl !== DEFAULT_LLM_BASE_URL
+  && llmProvider.model.trim()
+  && llmProvider.apiKey.trim(),
+))
+
+// 桌面端与移动端的设置界面结构不同，教程步骤需按布局裁剪
+const tourLayout = computed<'desktop' | 'mobile'>(() => (isDesktopTauri.value || window.innerWidth >= 768 ? 'desktop' : 'mobile'))
+
+// 脚本初始化后才能引用 appMode / handleBackToHome，故在下方 useQuiz 之后再赋值
+let tourSteps: ReturnType<typeof buildTourSteps> = []
 
 const q = useQuiz()
 const quizStore = useQuizStore()
@@ -114,6 +144,37 @@ const {
   confirmImportToNew, confirmImportToExisting, cancelImport,
   handleClearWrongAnswers,
 } = q
+
+// ── 新手教程：步骤与生命周期 ──
+tourSteps = buildTourSteps({
+  goHome: () => handleBackToHome(),
+  openSettings: (section) => {
+    tourSettingsSection.value = section
+    appMode.value = 'settings'
+  },
+  modelReady: modelReady.value,
+})
+
+async function startTour() {
+  // 每次开始都回到首页，保证第一步从固定位置开始
+  handleBackToHome()
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  tourActive.value = true
+}
+
+function finishTour() {
+  tourActive.value = false
+  markTourDone()
+  tourSettingsSection.value = undefined
+}
+
+// 安装版首次启动自动播放；Web 版不打扰，用户可手动到设置里看
+onMounted(async () => {
+  await loadLlmProviderSettings().catch(() => { /* 读取失败按未配置处理 */ })
+  if (tourDone.value || !isDesktopTauri.value) return
+  // 等首页渲染完成再开始，否则锚点还查不到
+  setTimeout(() => { void startTour() }, 600)
+})
 
 
 function handleBackToSettings() {

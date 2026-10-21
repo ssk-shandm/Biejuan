@@ -106,9 +106,10 @@ export const tauriAppStorage: AppStorage = {
 export function isJsonFile(file: Pick<File, 'name' | 'type'>): boolean {
   return file.type === 'application/json' || file.name.toLowerCase().endsWith('.json')
 }
-/** Save exported data using Android's document picker, not WebView <a download>. */
+/** Save through Tauri's native picker; browser runtimes use a download link. */
 export async function saveExportBlob(name: string, blob: Blob): Promise<boolean> {
-  if (typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent) && '__TAURI_INTERNALS__' in window) {
+  const isTauriRuntime = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+  if (isTauriRuntime) {
     const { save } = await import('@tauri-apps/plugin-dialog')
     const { writeFile } = await import('@tauri-apps/plugin-fs')
     const extension = name.split('.').pop() || 'json'

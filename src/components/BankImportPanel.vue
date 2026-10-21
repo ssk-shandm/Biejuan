@@ -1,5 +1,5 @@
 ﻿<template>
-  <section class="bank-import" aria-label="导入题库">
+  <section class="bank-import" aria-label="导入题库" data-tour="bank-import">
     <button type="button" :disabled="busy" @click="choose">导入 JSON 题库</button>
     <input ref="input" type="file" accept=".json,application/json" hidden @change="readFile" />
     <div v-if="inspection" class="preview">

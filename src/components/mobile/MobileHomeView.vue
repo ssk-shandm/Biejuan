@@ -3,7 +3,7 @@
     <section class="mobile-panel" role="status">题库加载中...</section>
   </template>
   <template v-else>
-    <section class="mobile-panel mobile-home-bank-card">
+    <section class="mobile-panel mobile-home-bank-card" data-tour="bank-selector">
       <div class="mobile-section-heading">
         <div><span class="mobile-section-eyebrow">LIBRARY</span><h2>选择题库</h2></div>
         <span class="mobile-section-mark" aria-hidden="true">▤</span>
@@ -19,17 +19,17 @@
         <div><span class="mobile-section-eyebrow">YOUR ROUTINE</span><h2>开始学习</h2></div>
         <span class="mobile-section-mark mobile-section-mark-accent" aria-hidden="true">✦</span>
       </div>
-      <button class="mobile-action mobile-primary" type="button" @click="$emit('start', 'practice')">做题练习 →</button>
-      <button class="mobile-action" type="button" @click="$emit('start', 'exam')">模拟考试 →</button>
-      <button class="mobile-action" type="button" @click="$emit('start', 'endorse')">背题模式 →</button>
-      <button class="mobile-action" type="button" @click="showTypes = !showTypes">专项练习 {{ showTypes ? '⌃' : '⌄' }}</button>
+      <button class="mobile-action mobile-primary" data-tour="mode-practice" type="button" @click="$emit('start', 'practice')">做题练习 →</button>
+      <button class="mobile-action" data-tour="mode-exam" type="button" @click="$emit('start', 'exam')">模拟考试 →</button>
+      <button class="mobile-action" data-tour="mode-endorse" type="button" @click="$emit('start', 'endorse')">背题模式 →</button>
+      <button class="mobile-action" data-tour="mode-specialize" type="button" @click="showTypes = !showTypes">专项练习 {{ showTypes ? '⌃' : '⌄' }}</button>
       <div v-if="showTypes" class="mobile-mode-list">
         <label v-for="type in availableQuestionTypes" :key="type" class="mobile-action">
           <input v-model="selectedTypes" type="checkbox" :value="type" /> {{ type }}
         </label>
         <button class="mobile-action mobile-primary" type="button" :disabled="!selectedTypes.length" @click="startSpecialize">开始专项</button>
       </div>
-      <button class="mobile-action" type="button" :disabled="wrongCount === 0" @click="$emit('start', 'wrong')">错题练习（{{ wrongCount }}） →</button>
+      <button class="mobile-action" data-tour="mode-wrong" type="button" :disabled="wrongCount === 0" @click="$emit('start', 'wrong')">错题练习（{{ wrongCount }}） →</button>
     </section>
   </template>
 </template>

@@ -1,7 +1,7 @@
 export const APP_NAME = '别卷'
-export const APP_VERSION_FALLBACK = '0.2.0'
+export const APP_VERSION_FALLBACK = '0.2.1'
 export const GITHUB_OWNER = 'ssk-shandm'
-export const GITHUB_REPO = 'exam'
+export const GITHUB_REPO = 'Biejuan'
 export const REPOSITORY_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}`
 export const RELEASES_URL = `${REPOSITORY_URL}/releases/latest`
 export const LICENSE_NAME = 'MIT License'

@@ -16,7 +16,7 @@
           <p>支持 <code>/chat/completions</code> 接口的模型服务均可使用。</p>
         </div>
       </div>
-      <div class='form-grid'>
+      <div class='form-grid' data-tour="ai-model-panel">
         <label class='field wide-field'>
           <span>API 基础地址</span>
           <input v-model.trim='provider.baseUrl' type='url' placeholder='https://api.example.com/v1' />
@@ -78,12 +78,28 @@
       </div>
       <p v-if='message' class='status' :class='messageType'>{{ message }}</p>
     </div>
+    <div class='settings-card' data-tour="prompt-export">
+      <div class='card-heading'>
+        <div>
+          <h3>不会配置 AI？也可以手动转换</h3>
+          <p>导出 Prompt（提示词），把它和资料交给你常用的聊天 AI，生成题库 JSON 后，在「题库资源」中导入。</p>
+        </div>
+      </div>
+      <p class='manual-warning'>手动转换不具备应用内的自动分段、流式接收与校验修复。长资料可能超出聊天 AI 的长度限制，造成漏题或 JSON 截断；请分小批转换，核对完整性后再导入。</p>
+      <div class='actions'>
+        <button class='secondary-btn' type='button' :disabled='isExportingPrompt' @click='exportPrompt'>{{ isExportingPrompt ? '正在导出…' : '导出 Prompt' }}</button>
+      </div>
+      <p v-if='promptMessage' class='status' :class='promptMessageType' role='status'>{{ promptMessage }}</p>
+    </div>
   </section>
 </template>
 
 <script setup lang='ts'>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { buildChatCompletionsEndpoint, fetchAvailableModels, useLlmSettings } from '../composables/useLlmSettings'
+import { loadLlmFramework } from '../utils/llmFramework'
+import { buildManualConversionPrompt } from '../utils/manualConversionPrompt'
+import { saveExportBlob } from '../services/fileService'
 
 const {
   provider,
@@ -100,6 +116,9 @@ const isTesting = ref(false)
 const isSaving = ref(false)
 const isOpeningConfig = ref(false)
 const isFetchingModels = ref(false)
+const isExportingPrompt = ref(false)
+const promptMessage = ref('')
+const promptMessageType = ref<'success' | 'error'>('success')
 const availableModels = ref<string[]>([])
 const isDropdownOpen = ref(false)
 const dropdownRef = ref<HTMLElement | null>(null)
@@ -133,6 +152,23 @@ function validateConnection(requireKey = true) {
   if (!provider.model.trim()) return '请输入模型名称。'
   if (requireKey && !provider.apiKey.trim()) return '请输入 API 密钥。'
   return ''
+}
+
+async function exportPrompt() {
+  if (isExportingPrompt.value) return
+  isExportingPrompt.value = true
+  promptMessage.value = ''
+  try {
+    const prompt = buildManualConversionPrompt(await loadLlmFramework())
+    const saved = await saveExportBlob('别卷-手动转换Prompt.txt', new Blob([prompt], { type: 'text/plain;charset=utf-8' }))
+    promptMessageType.value = 'success'
+    promptMessage.value = saved ? 'Prompt 已导出。将提示词和资料交给 AI，生成完整 JSON 后到「题库资源」导入。' : '已取消导出。'
+  } catch (error) {
+    promptMessageType.value = 'error'
+    promptMessage.value = error instanceof Error ? error.message : 'Prompt 导出失败，请重试。'
+  } finally {
+    isExportingPrompt.value = false
+  }
 }
 
 async function saveSettings() {
@@ -290,6 +326,7 @@ code { font-family: Consolas, 'Courier New', monospace; font-size: .88em; }
 .status { margin: 10px 0; padding: 10px 12px; border-radius: 7px; font-size: .85rem; }
 .status.success { color: #1f7a48; background: rgba(39, 174, 96, .12); }
 .status.error { color: #b53a2d; background: rgba(231, 76, 60, .12); }
+.manual-warning { margin: 14px 0 0; color: var(--color-text-muted); font-size: .83rem; line-height: 1.75; }
 @media (max-width: 620px) {
   .settings-card { padding: 18px; }
   .intro-card, .card-heading, .actions { align-items: stretch; flex-direction: column; }

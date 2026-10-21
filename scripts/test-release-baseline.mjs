@@ -7,6 +7,7 @@ const json = path => JSON.parse(read(path))
 
 test('upgrades keep the released application identity and notebook storage contract', () => {
   assert.equal(json('src-tauri/tauri.conf.json').identifier, 'com.exam.assistant')
+  assert.equal(read('src/config/appInfo.ts').match(/GITHUB_REPO = '([^']+)'/)[1], 'Biejuan')
   const store = read('src/stores/quizStore.ts')
   assert.ok(store.includes("const COMBINED_FILE = 'quiz-data.json'"))
   assert.ok(store.includes("const COMBINED_LOCAL_KEY = 'wrongNotebookData_v2'"))

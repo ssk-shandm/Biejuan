@@ -2,7 +2,7 @@
 
 仓库根目录保留 [README](../README.md)；本文中的命令均在仓库根目录执行。发行前同步更新 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json`、`src/config/appInfo.ts` 版本号。
 
-版本状态（2026-10-15）：已发布版本为 v0.1.6，当前工作区版本字段为 v0.2.0。v0.2 已完成本地构建、自动化回归和升级保护验证，尚未上传 Release；真实 Windows 覆盖安装、卸载和重装验收仍待执行。
+版本状态（2026-10-20）：上一已发布版本为 v0.2.0，本次补丁版本字段统一为 v0.2.1；发布状态、资产和验证边界见 [v0.2.1 发行说明](RELEASE_NOTES_v0.2.1.md)。真实 Windows 安装、覆盖升级、卸载和重装验收仍待执行，不以自动化结果替代人工验收。
 
 ## 环境
 
@@ -37,8 +37,9 @@ npx tauri android build --apk --target aarch64 --ci
 ## 发布与检查更新
 
 1. 运行类型检查、测试、Web 构建和 Windows 安装包构建；若发布 Android APK，再完成 Android 构建和有效签名校验，确保声明的资产版本一致。
-2. 提交源码并推送；确认 Windows 覆盖升级、卸载保留数据和重装行为后，再创建 `v0.2.0` 标签及 GitHub Release，上传发行说明声明的 Windows NSIS 安装包及签名 APK（若发布 Android），不上传测试用独立 EXE。
-3. Windows 客户端通过 GitHub Releases 的 latest API 检查新版并查找 `*-setup.exe` 安装包；Android 不会自动安装 Windows 更新。
+2. 提交源码并推送；确认 Windows 覆盖升级、卸载保留数据和重装行为后，再创建对应版本标签（本次为 `v0.2.1`）及 GitHub Release，上传发行说明声明的 Windows NSIS 安装包及签名 APK（若发布 Android），不上传测试用独立 EXE。
+3. 沿用 `别卷 v<版本>` 标题和分节发行说明，Windows 下载资产命名为 `biejuan-<版本>-x64-setup.exe`，记录字节数及 SHA-256；只上传本次构建，不覆盖历史版本资产。尚未完成的人工验收必须在发行说明中明确列出，不标记为已通过。
+4. Windows 客户端通过 GitHub Releases 的 latest API 检查新版并查找 `*-setup.exe` 安装包；Android 不会自动安装 Windows 更新。
 
 自动更新仅适用于 NSIS 安装版，不会将 Release 中的便携版 `.exe` 当成安装包运行。安装包保存到用户下载目录（不可用时回退到临时目录），完成下载校验后通过 Windows Shell 启动并请求管理员授权。更新使用 `/UPDATE /P /R`，并通过最后一个 `/D=<当前安装目录>` 参数锁定原安装位置；应用在安装器成功启动后退出，安装成功后由安装器重启。
 

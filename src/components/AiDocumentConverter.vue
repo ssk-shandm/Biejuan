@@ -22,7 +22,15 @@
         <label class="field"><span>题库名称</span><input v-model.trim="bankName" type="text" placeholder="留空则由 AI 自动命名" :disabled="isConverting" /></label>
         <label class="field"><span>起始题号</span><input v-model.number="startNumber" type="number" min="1" /></label>
       </div>
-      <label class="file-picker" :class="{ dragging: isDragging, busy: isExtracting }" @dragover.prevent="isDragging=true" @dragleave.prevent="isDragging=false" @drop.prevent="handleDrop">
+      <label
+        class="file-picker"
+        :class="{ dragging: isDragging, busy: isExtracting }"
+        data-tour="converter-drop"
+        @dragenter.prevent="onDragEnter"
+        @dragover.prevent="onDragOver"
+        @dragleave.prevent="onDragLeave"
+        @drop.prevent="handleDrop"
+      >
         <input ref="fileInput" multiple type="file" :accept="fileAccept" :disabled="isExtracting || isConverting" @change="handleFileChange" />
         <span class="file-icon">{{ isExtracting ? '…' : '＋' }}</span>
         <span class="file-copy">
@@ -122,7 +130,23 @@ function errorMessage(error:unknown,fallback='Unknown error'){if(error instanceo
 function errorDiagnostic(error:unknown){if(error instanceof Error){const stack=error.stack?.trim();return stack&&stack!==error.message?stack:error.name?error.name+': '+error.message:error.message}if(typeof error==='string')return error;try{return JSON.stringify(error,null,2)}catch{return String(error)}}
 function addTerminalError(context:string,error:unknown,details=''){const diagnostic=truncateDiagnostic(errorDiagnostic(error));const suffix=details?'\n'+truncateDiagnostic(details):'';addTerminalLine('error',context+'\n'+diagnostic+suffix)}
 async function handleFileChange(event:Event){const files=Array.from((event.target as HTMLInputElement).files??[]);if(files.length)await readSourceFiles(files)}
-async function handleDrop(event:DragEvent){isDragging.value=false;const files=Array.from(event.dataTransfer?.files??[]);if(files.length)await readSourceFiles(files)}
+
+// ── 拖拽导入 ──
+// dragenter / dragleave 会在进入或离开子元素时反复触发，导致高亮闪烁甚至丢失 drop。
+// 用计数器记录进入次数，只有计数归零才视为真正离开。
+let dragDepth = 0
+function onDragEnter(event:DragEvent){event.preventDefault();if(isExtracting.value||isConverting.value)return;dragDepth+=1;isDragging.value=true}
+function onDragOver(event:DragEvent){event.preventDefault();if(event.dataTransfer)event.dataTransfer.dropEffect='copy'}
+function onDragLeave(event:DragEvent){event.preventDefault();dragDepth=Math.max(0,dragDepth-1);if(dragDepth===0)isDragging.value=false}
+async function handleDrop(event:DragEvent){
+  event.preventDefault()
+  dragDepth=0
+  isDragging.value=false
+  if(isExtracting.value||isConverting.value)return
+  const files=Array.from(event.dataTransfer?.files??[])
+  if(!files.length){addTerminalLine('warning','拖入的内容里没有可读取的文件。如果是文件夹或网页链接，请改为直接选择文件。');return}
+  await readSourceFiles(files)
+}
 
 async function readSourceFiles(files:File[]){
   if(isExtracting.value||isConverting.value)return

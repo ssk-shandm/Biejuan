@@ -2,7 +2,7 @@
   <div class="start-screen">
     <h2>别卷</h2>
 
-    <div class="bank-selector">
+    <div class="bank-selector" data-tour="bank-selector">
       <label for="bank-select">选择题库：</label>
       <select id="bank-select" :value="selectedBank" :disabled="isRefreshingBanks || banks.length === 0" class="bank-select-input" @change="onBankChange">
         <option v-if="banks.length === 0" value="">暂无可用题库</option>
@@ -17,12 +17,12 @@
 
     <p>请选择模式：</p>
     <div class="mode-buttons">
-      <button class="mode-btn" @click="emit('start', 'exam')">考试模式</button>
-      <button class="mode-btn" @click="emit('start', 'endorse')">背题模式</button>
-      <button class="mode-btn" @click="emit('start', 'practice')">做题模式</button>
-      <button class="mode-btn" @click="handleSpecialize">专项练习</button>
-      <button class="mode-btn wrong-mode-btn" @click="emit('start', 'wrong-manage')">错题模式</button>
-      <button class="mode-btn settings-mode-btn" @click="emit('start', 'settings')">⚙ 设置</button>
+      <button class="mode-btn" data-tour="mode-exam" @click="emit('start', 'exam')">考试模式</button>
+      <button class="mode-btn" data-tour="mode-endorse" @click="emit('start', 'endorse')">背题模式</button>
+      <button class="mode-btn" data-tour="mode-practice" @click="emit('start', 'practice')">做题模式</button>
+      <button class="mode-btn" data-tour="mode-specialize" @click="handleSpecialize">专项练习</button>
+      <button class="mode-btn wrong-mode-btn" data-tour="mode-wrong" @click="emit('start', 'wrong-manage')">错题模式</button>
+      <button class="mode-btn settings-mode-btn" data-tour="mode-settings" @click="emit('start', 'settings')">⚙ 设置</button>
 
       <Transition name="slide-right">
         <div v-if="showSpecializePanel" class="specialize-panel">

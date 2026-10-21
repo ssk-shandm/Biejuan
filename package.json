@@ -1,6 +1,6 @@
 {
   "name": "aaa",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -72,10 +72,10 @@
   "author": "ssk-shandm",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ssk-shandm/exam.git"
+    "url": "git+https://github.com/ssk-shandm/Biejuan.git"
   },
-  "homepage": "https://github.com/ssk-shandm/exam#readme",
+  "homepage": "https://github.com/ssk-shandm/Biejuan#readme",
   "bugs": {
-    "url": "https://github.com/ssk-shandm/exam/issues"
+    "url": "https://github.com/ssk-shandm/Biejuan/issues"
   }
 }

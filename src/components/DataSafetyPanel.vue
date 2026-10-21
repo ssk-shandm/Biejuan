@@ -1,5 +1,5 @@
 ﻿<template>
-  <section class="data-safety" aria-label="数据与备份">
+  <section class="data-safety" aria-label="数据与备份" data-tour="backup-panel">
     <h3>数据与备份</h3>
     <p>数据版本 v{{ DATA_SCHEMA_VERSION }} · 应用 v{{ APP_VERSION_FALLBACK }}</p>
     <p class="location">{{ location }}</p>
