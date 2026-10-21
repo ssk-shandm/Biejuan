@@ -20,7 +20,7 @@
         <label class='field wide-field'>
           <span>API 基础地址</span>
           <input v-model.trim='provider.baseUrl' type='url' placeholder='https://api.example.com/v1' />
-          <small>接口地址：{{ endpointPreview }}</small>
+          <small>接口地址：{{ endpointPreview }}；本地网关可填写 <code>http://127.0.0.1:端口/v1</code>（不要填写 API Key 时也可尝试）</small>
         </label>
         <div class='field'>
           <label for='provider-model'>模型</label>
@@ -237,7 +237,11 @@ async function fetchModels() {
     isDropdownOpen.value = true
     showMessage(`已获取 ${availableModels.value.length} 个模型，点击输入框可选择。`, 'success')
   } catch (error) {
-    showMessage(error instanceof Error ? error.message : '获取模型列表失败。', 'error')
+    const raw = error instanceof Error ? error.message : String(error)
+    const localHint = /failed to fetch|fetch failed|networkerror|网络|跨域|cors/i.test(raw)
+      ? '请确认本地网关已启动、地址和端口正确，并允许桌面应用跨域访问（CORS）。'
+      : ''
+    showMessage(`${raw}${localHint ? ` ${localHint}` : ''}`, 'error')
   } finally {
     isFetchingModels.value = false
   }

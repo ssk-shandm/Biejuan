@@ -24,6 +24,14 @@ test('frontend, package locks and native application share the v0.2 release vers
   assert.equal(read('src-tauri/Cargo.lock').match(/\[\[package\]\]\s+name = "aaa"\s+version = "([^"]+)"/)[1], version)
 })
 
+test('current release notes and future release template use the agreed three-section format', () => {
+  const version = json('package.json').version
+  const headings = ['## 更新摘要', '## 详细更新', '## 安装与注意事项']
+  for (const path of [`docs/RELEASE_NOTES_v${version}.md`, 'docs/RELEASE_TEMPLATE.md']) {
+    assert.deepEqual(read(path).split(/\r?\n/).filter(line => /^## /.test(line)), headings)
+  }
+})
+
 test('native defaults use a public template instead of the writable development config', () => {
   const source = read('src-tauri/src/lib.rs')
   assert.ok(source.includes('include_str!("../../public/config/examples/llm-user-config.example.json")'))

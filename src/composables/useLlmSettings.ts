@@ -297,30 +297,81 @@ export async function clearLlmApiKey() {
 
 export function buildChatCompletionsEndpoint(baseUrl: string) {
   const normalized = baseUrl.trim().replace(/\/+$/, '')
-  return normalized.endsWith('/chat/completions') ? normalized : `${normalized}/chat/completions`
+  if (/\/chat\/completions$/i.test(normalized)) return normalized
+  if (/\/models$/i.test(normalized)) return normalized.replace(/\/models$/i, '/chat/completions')
+  return `${normalized}/chat/completions`
 }
 
 export function buildModelsEndpoint(baseUrl: string) {
   const normalized = baseUrl.trim().replace(/\/+$/, '')
-  return normalized.endsWith('/models') ? normalized : `${normalized}/models`
+  if (/\/models$/i.test(normalized)) return normalized
+  if (/\/chat\/completions$/i.test(normalized)) return normalized.replace(/\/chat\/completions$/i, '/models')
+  return `${normalized}/models`
+}
+
+function modelEndpointCandidates(baseUrl: string): string[] {
+  const primary = buildModelsEndpoint(baseUrl)
+  const normalized = baseUrl.trim().replace(/\/+$/, '')
+  // Many local gateways document the host as the base URL but expose the
+  // OpenAI-compatible routes below /v1. Keep the explicit URL first, then
+  // try the conventional local-gateway fallback when no version is present.
+  if (!/\/v\d+(?:\/|$)/i.test(normalized) && !/\/chat\/completions$/i.test(normalized) && !/\/models$/i.test(normalized)) {
+    return [primary, `${normalized}/v1/models`]
+  }
+  return [primary]
+}
+
+type ModelItem = { id?: unknown; name?: unknown; model?: unknown }
+
+function modelIds(payload: unknown): string[] {
+  const candidates: unknown[] = []
+  if (Array.isArray(payload)) candidates.push(payload)
+  if (payload && typeof payload === 'object') {
+    const value = payload as Record<string, unknown>
+    candidates.push(value.data, value.models, (value.data as Record<string, unknown> | undefined)?.models)
+  }
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue
+    const ids = candidate.map(item => {
+      if (typeof item === 'string') return item
+      if (!item || typeof item !== 'object') return ''
+      const value = item as ModelItem
+      return typeof value.id === 'string' ? value.id : typeof value.name === 'string' ? value.name : typeof value.model === 'string' ? value.model : ''
+    }).filter((id): id is string => Boolean(id.trim())).map(id => id.trim())
+    if (ids.length) return [...new Set(ids)].sort()
+  }
+  return []
 }
 
 export async function fetchAvailableModels(baseUrl: string, apiKey: string): Promise<string[]> {
-  const response = await fetch(buildModelsEndpoint(baseUrl), {
-    headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
-  })
-  if (!response.ok) {
-    const body = await response.text()
-    let message = body
-    try { message = (JSON.parse(body) as { error?: { message?: string } }).error?.message ?? body } catch { /* 保留原始错误 */ }
-    throw new Error(message || `获取模型列表失败（HTTP ${response.status}）`)
+  const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined
+  const endpoints = modelEndpointCandidates(baseUrl)
+  let lastFailure = ''
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(endpoint, { headers })
+      const body = await response.text()
+      let payload: unknown = null
+      try { payload = JSON.parse(body) } catch { /* 保留原始错误，下面给出可定位的提示 */ }
+      if (!response.ok) {
+        const message = payload && typeof payload === 'object' && payload !== null
+          ? ((payload as { error?: { message?: string }; message?: string }).error?.message
+            ?? (payload as { message?: string }).message)
+          : undefined
+        lastFailure = message || body.slice(0, 600) || `HTTP ${response.status}`
+        if (response.status === 404 || response.status === 405 || response.status === 501) continue
+        throw new Error(`${lastFailure}（请求地址：${endpoint}）`)
+      }
+      const ids = modelIds(payload)
+      if (ids.length) return ids
+      lastFailure = `模型服务未返回可识别列表（请求地址：${endpoint}）`
+    } catch (error) {
+      lastFailure = error instanceof Error ? error.message : String(error)
+      if (endpoint !== endpoints.at(-1)) continue
+      throw new Error(`${lastFailure}。请确认本地网关已启动，并允许桌面应用跨域访问（CORS）。`)
+    }
   }
-  const payload = await response.json() as { data?: Array<{ id?: string }> }
-  const ids = (payload.data ?? [])
-    .map((item) => item.id)
-    .filter((id): id is string => Boolean(id))
-  if (!ids.length) throw new Error('模型服务未返回可用模型列表。')
-  return ids.sort()
+  throw new Error(`${lastFailure || '模型服务未返回可用模型列表'}（最后请求地址：${endpoints.at(-1)}）。兼容接口通常返回 {"data":[{"id":"模型名"}]}。`)
 }
 
 export function useLlmSettings() {

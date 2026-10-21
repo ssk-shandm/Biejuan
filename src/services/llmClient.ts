@@ -145,7 +145,10 @@ export function createLlmClient(connection: LlmConnection, log: LlmLogger) {
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${connection.apiKey}` },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(connection.apiKey ? { Authorization: `Bearer ${connection.apiKey}` } : {}),
+        },
         body: JSON.stringify(body),
         signal: controller.signal,
       })
