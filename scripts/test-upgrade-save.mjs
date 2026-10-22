@@ -22,7 +22,22 @@ function harness({ gate, failAt } = {}) {
   const modules = {
     vue: { ref: value => ({ value }) },
     './useRuntimeConsole': { addRuntimeLog() {} },
-    '../config/appInfo': { APP_VERSION_FALLBACK: '0.2.0', GITHUB_OWNER: 'example', GITHUB_REPO: 'exam' },
+    '../config/appInfo': {
+      APP_VERSION_FALLBACK: '0.2.0',
+      GITHUB_OWNER: 'example',
+      GITHUB_REPO: 'exam',
+      RELEASES_URL: 'https://example.test/releases',
+      // 空数组：测试关注保存时序，不需要额外尝试加速源
+      UPDATE_DOWNLOAD_ACCELERATORS: [],
+    },
+    '../utils/downloadSource': {
+      buildDownloadCandidates: (url, accelerators) => {
+        const list = []
+        for (const prefix of accelerators) list.push(prefix + '/' + url)
+        list.push(url)
+        return list
+      },
+    },
     '@tauri-apps/api/core': { invoke: async command => {
       if (command === 'get_app_version') return '0.2.0'
       if (command === 'download_and_install_update') return step('download')

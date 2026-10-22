@@ -106,3 +106,5 @@ src-tauri/target/**
 
 # Local ad-hoc browser test scripts
 test-reset*.mjs
+# pnpm 锁文件（项目使用 npm，pnpm-lock.yaml 只由本地工具生成，不入库）
+pnpm-lock.yaml

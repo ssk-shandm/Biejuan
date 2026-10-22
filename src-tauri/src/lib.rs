@@ -405,16 +405,42 @@ fn validate_update_url(url: &str) -> Result<(), String> {
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
-    let allowed_hosts = [
+    // 官方 GitHub 资源域名
+    let github_hosts = [
         "github.com",
         "objects.githubusercontent.com",
         "github-releases.githubusercontent.com",
         "release-assets.githubusercontent.com",
     ];
-    if !allowed_hosts.contains(&host.as_str()) {
-        return Err("Update download URL is not a supported GitHub asset URL".to_string());
+    // 国内加速镜像：在原始 GitHub 地址前拼接代理前缀，避免用户自备代理。
+    // 这些域名只允许作为「前缀」，因此继续校验其后必须跟着一个 GitHub 资源地址。
+    let accelerator_hosts = ["ghfast.top", "gh-proxy.com", "ghproxy.net"];
+
+    if github_hosts.contains(&host.as_str()) {
+        return Ok(());
     }
-    Ok(())
+    if accelerator_hosts.contains(&host.as_str()) {
+        let after_host = rest.split_once('/').map(|(_, tail)| tail).unwrap_or("");
+        let inner = after_host.trim_start_matches('/');
+        if !inner.starts_with("https://") {
+            return Err(
+                "Accelerated update URL must embed a full https GitHub URL".to_string(),
+            );
+        }
+        let inner_rest = &inner["https://".len()..];
+        let inner_host = inner_rest
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if !github_hosts.contains(&inner_host.as_str()) {
+            return Err(
+                "Accelerated update URL must point at a supported GitHub asset".to_string(),
+            );
+        }
+        return Ok(());
+    }
+    Err("Update download URL is not a supported GitHub asset URL".to_string())
 }
 
 fn safe_update_file_name(file_name: &str) -> Result<String, String> {
@@ -888,6 +914,47 @@ mod content_tests {
                 read_question_bank_from_directories(file, Some(&temp.0), &temp.0).is_err(),
                 "{file}"
             );
+        }
+    }
+
+    #[test]
+    fn update_url_accepts_official_github_assets() {
+        for url in [
+            "https://github.com/ssk-shandm/Biejuan/releases/download/v0.2.4/biejuan_0.2.4_x64-setup.exe",
+            "https://objects.githubusercontent.com/some/path/installer-setup.exe",
+            "https://release-assets.githubusercontent.com/some/path/installer-setup.exe",
+        ] {
+            assert!(validate_update_url(url).is_ok(), "{url}");
+        }
+    }
+
+    #[test]
+    fn update_url_accepts_accelerated_mirror_prefixes() {
+        // 国内镜像：前缀 + 完整 GitHub 地址，普通用户无需自备代理
+        for url in [
+            "https://ghfast.top/https://github.com/ssk-shandm/Biejuan/releases/download/v0.2.4/biejuan_0.2.4_x64-setup.exe",
+            "https://gh-proxy.com/https://github.com/ssk-shandm/Biejuan/releases/download/v0.2.4/biejuan_0.2.4_x64-setup.exe",
+            "https://ghproxy.net/https://github.com/ssk-shandm/Biejuan/releases/download/v0.2.4/biejuan_0.2.4_x64-setup.exe",
+        ] {
+            assert!(validate_update_url(url).is_ok(), "{url}");
+        }
+    }
+
+    #[test]
+    fn update_url_rejects_unsafe_or_malformed_urls() {
+        for url in [
+            // 非 HTTPS
+            "http://github.com/ssk-shandm/Biejuan/releases/download/v1/a-setup.exe",
+            // 未授权主机
+            "https://evil.example.com/biejuan-setup.exe",
+            // 镜像前缀后不是 GitHub 地址
+            "https://ghfast.top/https://evil.example.com/biejuan-setup.exe",
+            // 镜像前缀后缺少内嵌地址
+            "https://ghfast.top/biejuan-setup.exe",
+            // 镜像前缀后使用 http
+            "https://ghfast.top/http://github.com/a/b/releases/download/v1/a-setup.exe",
+        ] {
+            assert!(validate_update_url(url).is_err(), "{url}");
         }
     }
 }

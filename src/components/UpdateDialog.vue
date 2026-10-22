@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <Teleport to="body">
     <div v-if="updateInfo" class="dialog-overlay" @click.self="clearUpdate">
       <div class="update-dialog" role="dialog" aria-modal="true" aria-labelledby="update-title">
@@ -12,6 +12,9 @@
         <p v-else class="release-notes-empty">该版本没有提供更新说明。</p>
         <p v-if="isDownloading && downloadProgress" class="download-progress" aria-live="polite">
           {{ downloadProgress }}
+        </p>
+        <p v-if="!isDownloading" class="download-hint">
+          已自动使用国内加速下载，无需代理；若加速不可用会自动改用 GitHub 官方地址。
         </p>
         <p v-if="downloadError" class="download-error">{{ downloadError }}</p>
         <div class="dialog-actions">
@@ -113,6 +116,13 @@ async function downloadAndInstallUpdate() {
   margin: 14px 0 0;
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+.download-hint {
+  margin: 12px 0 0;
+  color: var(--color-text-muted);
+  font-size: .82rem;
+  line-height: 1.6;
 }
 
 .download-error {

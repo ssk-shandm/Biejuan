@@ -5,7 +5,9 @@ import {
   GITHUB_OWNER,
   GITHUB_REPO,
   RELEASES_URL,
+  UPDATE_DOWNLOAD_ACCELERATORS,
 } from '../config/appInfo'
+import { buildDownloadCandidates } from '../utils/downloadSource'
 
 const GITHUB_API_URL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
 
@@ -122,6 +124,11 @@ export function useVersion() {
     updateError.value = ''
     addRuntimeLog('info', 'Starting update download: ' + info.installerName)
 
+    // 先走国内加速镜像，全部失败再回退 GitHub 官方地址
+    const candidates = buildDownloadCandidates(info.installerUrl, UPDATE_DOWNLOAD_ACCELERATORS)
+    if (!candidates.length) throw new Error('更新包下载地址无效')
+    addRuntimeLog('info', `下载源：${candidates.length > 1 ? `${candidates.length} 个候选（优先加速镜像）` : 'GitHub 官方'}`)
+
     const unlisteners: Array<() => void> = []
     downloadProgress.value = ''
     // 终端日志只按 10% 步进记录，界面上的进度文本则实时刷新
@@ -155,9 +162,32 @@ export function useVersion() {
         downloadProgress.value = '正在启动安装程序…'
         addRuntimeLog('info', '安装包已保存到：' + event.payload + '，正在启动安装程序')
       }))
+
       // This command prepares the download only; installation is a separate
       // handshake so edits made during the download can finish saving first.
-      await invoke('download_and_install_update', { url: info.installerUrl, fileName: info.installerName })
+      // 逐个尝试下载源：任何一个成功就停止，避免无谓的重复下载。
+      let lastFailure = ''
+      let downloaded = false
+      for (let index = 0; index < candidates.length; index += 1) {
+        const url = candidates[index]!
+        const isLast = index === candidates.length - 1
+        if (index > 0) {
+          downloadProgress.value = ''
+          lastLoggedStep = -1
+          addRuntimeLog('warn', `加速源不可用，改用下一个下载源（${index + 1}/${candidates.length}）`)
+        }
+        try {
+          await invoke('download_and_install_update', { url, fileName: info.installerName })
+          downloaded = true
+          break
+        } catch (error) {
+          lastFailure = error instanceof Error ? error.message : String(error)
+          addRuntimeLog('warn', `下载源 ${index + 1}/${candidates.length} 失败：${lastFailure}`)
+          if (isLast) throw new Error(lastFailure)
+        }
+      }
+      if (!downloaded) throw new Error(lastFailure || '更新包下载失败')
+
       await useQuizStore().flushSavedData()
       await persistLearningState()
       await drainLearningWrites({ requireSaved: true })
