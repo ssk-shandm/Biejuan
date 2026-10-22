@@ -15,10 +15,13 @@ export const COPYRIGHT_LINE = 'Copyright © 2026 ssk-shandm'
  * 所以默认先走公共镜像。这些镜像都是第三方公益服务，单个可能临时不可用，
  * 因此配置多个按顺序重试；留空数组即完全直连官方地址。
  *
+ * 顺序按 2026-10-22 实测调整：ghfast.top 当时超时，gh-proxy.com 正常返回，
+ * 故把可用的放在前面，减少用户等待首个镜像超时的时间。
+ *
  * 注意：新增镜像域名时，必须同步更新 src-tauri/src/lib.rs 的
  * validate_update_url 白名单，否则下载请求会被 Rust 端拒绝。
  */
 export const UPDATE_DOWNLOAD_ACCELERATORS = [
-  'https://ghfast.top',
   'https://gh-proxy.com',
+  'https://ghfast.top',
 ] as const
