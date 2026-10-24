@@ -957,4 +957,24 @@ mod content_tests {
             assert!(validate_update_url(url).is_err(), "{url}");
         }
     }
+
+    /// 拖拽开关是编译进窗口的配置，前端改不了；这里用 Tauri 自己的配置反序列化验证
+    /// tauri.conf.json 里的 dragDropEnabled 确实被读成 drag_drop_enabled = false。
+    #[test]
+    fn window_config_disables_native_drag_drop_handler() {
+        let raw = include_str!("../tauri.conf.json");
+        let config: tauri::utils::config::Config =
+            serde_json::from_str(raw).expect("tauri.conf.json 必须能被 Tauri 解析");
+        let main = config
+            .app
+            .windows
+            .iter()
+            .find(|window| window.label == "main")
+            .expect("缺少 main 窗口配置");
+        assert!(
+            !main.drag_drop_enabled,
+            "main 窗口必须 dragDropEnabled: false；否则 Windows 上 wry 会接管 WebView2 拖放，\
+             HTML5 的 dragover / drop 收不到，文档转换区域无法拖入文件"
+        );
+    }
 }

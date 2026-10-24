@@ -32,6 +32,24 @@ test('current release notes and future release template use the agreed three-sec
   }
 })
 
+test('desktop window hands HTML5 drag and drop back to the web layer', () => {
+  // Windows 上 wry 会接管 WebView2 的拖放并调用 SetAllowExternalDrop(false)，
+  // 页面里的 dragover / drop 事件永远收不到。只有把 dragDropEnabled 设为 false
+  // 才能让文档转换区域的拖入生效；这是编译进窗口的配置，前端代码改不了。
+  const windows = json('src-tauri/tauri.conf.json').app.windows
+  const main = windows.find(window => (window.label ?? 'main') === 'main')
+  assert.ok(main, '缺少主窗口配置')
+  assert.equal(main.dragDropEnabled, false, '主窗口必须设置 dragDropEnabled: false，否则 Windows 安装版无法拖入文件')
+})
+
+test('document converter keeps a drop target for dragged files', () => {
+  const converter = read('src/components/AiDocumentConverter.vue')
+  assert.match(converter, /@drop\.prevent="handleDrop"/, '文档转换区域必须保留 drop 处理')
+  assert.match(converter, /event\.dataTransfer\?\.files/, 'drop 处理必须从 dataTransfer 读取文件')
+  const main = read('src/main.ts')
+  assert.match(main, /addEventListener\('drop'/, '全局 drop 拦截应保留，避免拖到空白处时 WebView 打开文件')
+})
+
 test('native defaults use a public template instead of the writable development config', () => {
   const source = read('src-tauri/src/lib.rs')
   assert.ok(source.includes('include_str!("../../public/config/examples/llm-user-config.example.json")'))
