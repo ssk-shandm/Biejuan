@@ -18,7 +18,7 @@
 ### 验证
 - 配置检查、lint、类型检查、146 项前端与数据测试、20 项 Rust 测试通过。
 - Windows x64 NSIS 安装包构建通过，主程序版本号为 0.2.5。
-- 未进行真实 Windows 安装后的拖拽人工验收，不以自动化结果替代人工验收。
+- 项目维护者已确认拖拽导入在 Windows 安装版中正常工作。
 
 ## 安装与注意事项
 - 发布 Windows x64 NSIS 安装程序，需要 Windows 及 WebView2；不发布便携版 EXE 或 Android APK。安装包未签名，Windows 可能提示未知发布者。
